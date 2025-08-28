@@ -25,8 +25,8 @@ class Anomaly(BaseModel):
     comparison_value: str = Field(default="N/A", description="Previous quarter value") 
     change_percent: str = Field(default="N/A", description="Percentage change")
     risk_level: str = Field(description="High, Medium, or Low")
-    explanation: str = Field(description="Business context explanation", max_length=120)
-    next_steps: str = Field(description="Recommended actions", max_length=100)
+    explanation: str = Field(description="Business context explanation", max_length=200)
+    next_steps: str = Field(description="Recommended actions", max_length=150)
     z_score: float = Field(description="Statistical z-score")
 
 class ExecutiveSummary(BaseModel):
@@ -387,17 +387,20 @@ def main():
                             }
                         }
                         
-                        prompt = f"""Analyze this quarterly financial data:
+                        prompt = f"""Analyze this quarterly financial data and provide insights:
 
 Data: {json.dumps(data_summary['latest_quarter'], indent=2)}
-Anomalies: {json.dumps(anomalies, indent=2)}
+Statistical Anomalies: {json.dumps(anomalies, indent=2)}
 
-Generate:
-1. Executive summary (3-5 sentences)
-2. Explanation for each anomaly (under 80 words)
-3. Next steps for each issue
+Requirements:
+1. Generate executive summary (3-5 sentences max)
+2. For each anomaly, provide:
+   - Business explanation (max 200 characters)
+   - Next steps (max 150 characters)
+3. Use only provided numbers - no estimates
+4. Keep language concise and professional
 
-Use only the provided numbers. Focus on actionable insights."""
+CRITICAL: Keep all explanations and next steps very brief - under the character limits."""
 
                         response = client.messages.create(
                             model="claude-3-5-haiku-20241022",
