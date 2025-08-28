@@ -128,6 +128,48 @@ def calculate_qoq_changes(df: pd.DataFrame) -> pd.DataFrame:
     
     return df_sorted
 
+def clean_ai_text(text: str) -> str:
+    """Aggressively clean formatting issues in AI-generated text"""
+    if not text:
+        return text
+    
+    import re
+    
+    # Remove all markdown formatting
+    text = re.sub(r'\*+', '', text)  # Remove all asterisks
+    text = re.sub(r'_+', '', text)   # Remove underscores
+    text = re.sub(r'#+', '', text)   # Remove hashtags
+    
+    # Fix number formatting issues
+    text = re.sub(r'(\d+\.?\d*)M\(', r'\1M (', text)  # Add space before parentheses
+    text = re.sub(r'(\d+\.?\d*)\(', r'\1 (', text)    # Space before any parentheses
+    text = re.sub(r'\)(\w)', r') \1', text)           # Space after closing parentheses
+    text = re.sub(r'(\d)([A-Z])', r'\1 \2', text)     # Space between numbers and letters
+    text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)  # Space between camelCase
+    
+    # Fix sentence structure
+    text = re.sub(r'\.([A-Z])', r'. \1', text)        # Space after periods
+    text = re.sub(r',([A-Z])', r', \1', text)         # Space after commas
+    text = re.sub(r':([A-Z])', r': \1', text)         # Space after colons
+    
+    # Fix specific formatting patterns
+    text = re.sub(r'M\.([A-Z])', r'M. \1', text)      # Space after currency and period
+    text = re.sub(r'%)\.', r'%). ', text)             # Space after percentage and period
+    text = re.sub(r'%\)', r'%)', text)                # Fix percentage format
+    
+    # Remove duplicate spaces
+    text = re.sub(r'\s+', ' ', text)
+    
+    # Fix punctuation spacing
+    text = re.sub(r' \.', '.', text)  # Remove space before period
+    text = re.sub(r' ,', ',', text)   # Remove space before comma
+    
+    # Ensure sentences end properly
+    if text and not text.endswith('.'):
+        text += '.'
+    
+    return text.strip()
+
 def safe_column_match(metric_name: str, df_columns: List[str]) -> str:
     """Safely match anomaly metric names to actual DataFrame columns"""
     
