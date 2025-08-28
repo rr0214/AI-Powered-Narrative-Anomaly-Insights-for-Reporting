@@ -6,7 +6,7 @@
 
 **Goal:** Demonstrate how AI can streamline financial/ESG reporting by automatically generating executive-ready narratives and flagging anomalies from structured data.
 
-**Why Workiva:** Aligns with Workiva's mission of connected, compliant reporting by showing how LLMs + lightweight stats can save hours of analyst effort, reduce errors, and increase transparency.
+** Demonstrates how LLMs + lightweight stats can save hours of analyst effort, reduce errors, and increase transparency.
 
 ---
 
