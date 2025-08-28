@@ -430,26 +430,29 @@ def main():
                             }
                         }
                         
-                        # Few-shot prompt with counter-examples
-                        prompt = f"""Analyze quarterly financial data. Follow these patterns:
+                        # Few-shot prompt with counter-examples and formatting requirements
+                        prompt = f"""Analyze quarterly financial data. Follow these formatting patterns:
 
-CORRECT: "Revenue reached $45.2M" (uses exact provided number)
-WRONG: "Revenue grew 12%" (calculated percentage not provided)
+CORRECT FORMAT: "Total revenue reached $45.2M in Q3 2024, with Americas contributing $26.5M, APAC $13.2M, and EMEA $9.4M."
+WRONG FORMAT: "Total revenue reached 45.2Min2024−Q3,withAmericascontributing26.5M"
 
-CORRECT: "Operating expenses at $35.8M exceeded normal range"  
-WRONG: "Due to new acquisitions and market expansion" (external context not provided)
+CORRECT BUSINESS TONE: "Operating expenses exceeded revenue by $6.1M, resulting in a net loss and requiring immediate cost management."
+WRONG TONE: "Operating expenses were high and caused problems."
 
-=== YOUR DATA ===
-Current Quarter: {json.dumps(data_summary['latest_quarter'], indent=2)}
+=== ANALYSIS REQUIREMENTS ===
+Current Quarter Data: {json.dumps(data_summary['latest_quarter'], indent=2)}
 Statistical Anomalies: {json.dumps(anomalies, indent=2)}
 
-Requirements:
-1. Executive summary: 3-5 sentences using ONLY provided numbers
-2. Each anomaly: explanation under 200 chars, next steps under 150 chars
-3. Risk levels: High/Medium/Low only
-4. NO calculations, percentages, or external context unless explicitly provided
+Instructions:
+1. Write in clear, executive-ready language
+2. Use proper spacing and punctuation  
+3. Format numbers as currency ($X.XM) with proper spacing
+4. Lead with the most critical business insights
+5. Each explanation: under 200 characters, professional tone
+6. Each next step: under 150 characters, actionable
+7. Use ONLY the provided numbers - no calculations or estimates
 
-Use the financial_analysis tool with exact schema compliance."""
+Generate structured analysis using the financial_analysis tool."""
 
                         response = client.messages.create(
                             model="claude-3-5-haiku-20241022",
