@@ -22,11 +22,11 @@ except ImportError as e:
 class Anomaly(BaseModel):
     metric: str = Field(description="The financial metric with anomaly")
     current_value: str = Field(description="Current quarter value")
-    comparison_value: str = Field(description="Previous quarter value") 
-    change_percent: str = Field(description="Percentage change")
+    comparison_value: str = Field(default="N/A", description="Previous quarter value") 
+    change_percent: str = Field(default="N/A", description="Percentage change")
     risk_level: str = Field(description="High, Medium, or Low")
-    explanation: str = Field(description="Business context explanation", max_length=80)
-    next_steps: str = Field(description="Recommended actions")
+    explanation: str = Field(description="Business context explanation", max_length=120)
+    next_steps: str = Field(description="Recommended actions", max_length=100)
     z_score: float = Field(description="Statistical z-score")
 
 class ExecutiveSummary(BaseModel):
