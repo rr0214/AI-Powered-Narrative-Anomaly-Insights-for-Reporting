@@ -79,7 +79,19 @@ def init_database():
     return conn
 
 # Text cleanup function
-def clean_ai_text(text: str) -> str:
+def clean_data_for_json(data: Dict) -> Dict:
+    """Clean DataFrame data for safe JSON serialization"""
+    cleaned = {}
+    for key, value in data.items():
+        if pd.isna(value):
+            cleaned[key] = None
+        elif np.isinf(value):
+            cleaned[key] = None  
+        elif isinstance(value, (np.integer, np.floating)):
+            cleaned[key] = float(value)
+        else:
+            cleaned[key] = value
+    return cleaned
     """Clean formatting issues in AI-generated text"""
     if not text:
         return text
@@ -454,9 +466,21 @@ def main():
                         opex_change = current_quarter.get('Operating_Expenses_M', 0) - previous_quarter.get('Operating_Expenses_M', 0)
                         opex_pct = (opex_change / previous_quarter.get('Operating_Expenses_M', 1)) * 100 if previous_quarter.get('Operating_Expenses_M', 0) != 0 else 0
                         
-                        # Prepare data for Claude with counter-examples
+                        # Prepare data for Claude with proper JSON cleaning
+                        current_quarter_clean = clean_data_for_json(current_quarter.to_dict())
+                        anomalies_clean = []
+                        
+                        for anomaly in anomalies:
+                            clean_anomaly = {
+                                'metric': anomaly['metric'],
+                                'value': float(anomaly['value']) if pd.notna(anomaly['value']) else 0,
+                                'z_score': float(anomaly['z_score']) if pd.notna(anomaly['z_score']) else 0,
+                                'index': int(anomaly['index'])
+                            }
+                            anomalies_clean.append(clean_anomaly)
+                        
                         data_summary = {
-                            'latest_quarter': current_quarter.to_dict() if len(df_with_changes) > 0 else {},
+                            'latest_quarter': current_quarter_clean,
                         }
                         
                         # Create analysis tool schema
@@ -517,7 +541,7 @@ EXAMPLE CORRECT OUTPUT:
 "Revenue declined $3.2M (-6.1%) from $52.3M to $49.1M. Regional performance varied with APAC dropping $2.6M (-16.5%) while Americas remained stable. Operating expenses increased $16.3M (+41.9%) to $55.2M."
 
 Your Data: {json.dumps(data_summary['latest_quarter'], indent=2)}
-Anomalies: {json.dumps(anomalies, indent=2)}
+Anomalies: {json.dumps(anomalies_clean, indent=2)}
 
 Generate clean, readable analysis using financial_analysis tool."""
 
