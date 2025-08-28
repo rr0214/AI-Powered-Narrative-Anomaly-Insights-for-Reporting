@@ -430,27 +430,36 @@ def main():
                             }
                         }
                         
-                        # Few-shot prompt with counter-examples and formatting requirements
-                        prompt = f"""Analyze quarterly financial data. Follow these formatting patterns:
+                        # Enhanced prompt requiring specific quantified analysis
+                        prompt = f"""Analyze quarterly financial data with specific numerical precision.
 
-CORRECT FORMAT: "Total revenue reached $45.2M in Q3 2024, with Americas contributing $26.5M, APAC $13.2M, and EMEA $9.4M."
-WRONG FORMAT: "Total revenue reached 45.2Min2024−Q3,withAmericascontributing26.5M"
+REQUIRED: All statements must include exact numbers and calculations.
 
-CORRECT BUSINESS TONE: "Operating expenses exceeded revenue by $6.1M, resulting in a net loss and requiring immediate cost management."
-WRONG TONE: "Operating expenses were high and caused problems."
+CORRECT SPECIFIC FORMAT: 
+"Total revenue declined $3.2M (-6.1%) from $52.3M to $49.1M, driven by APAC's $2.6M drop (-16.5%)"
+"Operating expenses surged $16.3M (+41.9%) from $38.9M to $55.2M"
 
-=== ANALYSIS REQUIREMENTS ===
-Current Quarter Data: {json.dumps(data_summary['latest_quarter'], indent=2)}
+WRONG VAGUE FORMAT:
+"Notable revenue declines across regional markets" 
+"Significant challenges in cost management"
+"Escalating operating expenses"
+
+=== DATA TO ANALYZE ===
+Current Quarter: {json.dumps(data_summary['latest_quarter'], indent=2)}
 Statistical Anomalies: {json.dumps(anomalies, indent=2)}
 
-Instructions:
-1. Write in clear, executive-ready language
-2. Use proper spacing and punctuation  
-3. Format numbers as currency ($X.XM) with proper spacing
-4. Lead with the most critical business insights
-5. Each explanation: under 200 characters, professional tone
-6. Each next step: under 150 characters, actionable
-7. Use ONLY the provided numbers - no calculations or estimates
+=== CALCULATION REQUIREMENTS ===
+For EVERY metric mentioned, you must:
+1. State current value and previous value with exact dollar amounts
+2. Calculate and state absolute change ($X.XM difference)
+3. Calculate and state percentage change (X.X% up/down)
+4. Identify which specific metric drove overall changes
+
+Example calculation format:
+- "Revenue: $49.1M (down $3.2M or -6.1% from Q4's $52.3M)"
+- "Operating expenses: $55.2M (up $16.3M or +41.9% from Q4's $38.9M)"
+
+NEVER use vague terms like "challenges," "notable," "significant" without specific numbers.
 
 Generate structured analysis using the financial_analysis tool."""
 
