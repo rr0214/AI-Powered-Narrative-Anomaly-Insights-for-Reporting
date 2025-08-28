@@ -83,14 +83,26 @@ def clean_data_for_json(data: Dict) -> Dict:
     """Clean DataFrame data for safe JSON serialization"""
     cleaned = {}
     for key, value in data.items():
-        if pd.isna(value):
-            cleaned[key] = None
-        elif np.isinf(value):
-            cleaned[key] = None  
-        elif isinstance(value, (np.integer, np.floating)):
-            cleaned[key] = float(value)
-        else:
-            cleaned[key] = value
+        try:
+            # Handle different data types safely
+            if pd.isna(value):
+                cleaned[key] = None
+            elif isinstance(value, str):
+                cleaned[key] = value  # Keep strings as-is
+            elif isinstance(value, (int, np.integer)):
+                cleaned[key] = int(value)
+            elif isinstance(value, (float, np.floating)):
+                if np.isinf(value):
+                    cleaned[key] = None
+                else:
+                    cleaned[key] = float(value)
+            else:
+                # Convert other types to string
+                cleaned[key] = str(value)
+        except Exception:
+            # If anything fails, convert to string
+            cleaned[key] = str(value) if value is not None else None
+    
     return cleaned
     """Clean formatting issues in AI-generated text"""
     if not text:
