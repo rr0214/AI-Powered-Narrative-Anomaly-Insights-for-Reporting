@@ -592,25 +592,28 @@ Generate clean, readable analysis using financial_analysis tool."""
                             
                         tool_result["analysis_timestamp"] = datetime.now().isoformat()
                         
-                        # Validate and clean anomalies with automatic truncation and text cleanup
+                        # Validate and clean anomalies (temporarily without text cleaning)
                         cleaned_anomalies = []
                         for anomaly in tool_result["anomalies"]:
                             cleaned_anomaly = {
-                                "metric": clean_ai_text(str(anomaly.get("metric", "Unknown"))),
-                                "current_value": clean_ai_text(str(anomaly.get("current_value", "N/A"))),
-                                "comparison_value": clean_ai_text(str(anomaly.get("comparison_value", "N/A"))),
-                                "change_percent": clean_ai_text(str(anomaly.get("change_percent", "N/A"))),
+                                "metric": str(anomaly.get("metric", "Unknown")),
+                                "current_value": str(anomaly.get("current_value", "N/A")),
+                                "comparison_value": str(anomaly.get("comparison_value", "N/A")),
+                                "change_percent": str(anomaly.get("change_percent", "N/A")),
                                 "risk_level": anomaly.get("risk_level", "Medium"),
-                                "explanation": clean_ai_text(str(anomaly.get("explanation", "Statistical anomaly detected")))[:200],
-                                "next_steps": clean_ai_text(str(anomaly.get("next_steps", "Review data for accuracy")))[:150],
+                                "explanation": str(anomaly.get("explanation", "Statistical anomaly detected"))[:200],
+                                "next_steps": str(anomaly.get("next_steps", "Review data for accuracy"))[:150],
                                 "z_score": float(anomaly.get("z_score", 2.0))
                             }
                             cleaned_anomalies.append(cleaned_anomaly)
                         tool_result["anomalies"] = cleaned_anomalies
                         
-                        # Clean the executive summary text too
+                        # Clean the executive summary (temporarily without text cleaning)
                         if "executive_summary" in tool_result:
-                            tool_result["executive_summary"]["narrative"] = clean_ai_text(tool_result["executive_summary"]["narrative"])
+                            narrative = tool_result["executive_summary"]["narrative"]
+                            # Simple cleaning - remove asterisks
+                            narrative = narrative.replace('*', '').replace('_', '')
+                            tool_result["executive_summary"]["narrative"] = narrative
                         
                         analysis = FinancialAnalysis(**tool_result)
                     
