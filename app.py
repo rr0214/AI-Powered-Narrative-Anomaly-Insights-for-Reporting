@@ -43,10 +43,17 @@ class FinancialAnalysis(BaseModel):
 # Initialize Anthropic client
 @st.cache_resource
 def get_anthropic_client():
-    api_key = st.secrets.get("ANTHROPIC_API_KEY") or st.sidebar.text_input(
-        "Anthropic API Key", type="password", 
-        help="Get your API key from console.anthropic.com"
-    )
+    try:
+        api_key = st.secrets.get("ANTHROPIC_API_KEY")
+    except:
+        api_key = None
+    
+    if not api_key:
+        api_key = st.sidebar.text_input(
+            "Anthropic API Key", type="password", 
+            help="Get your API key from console.anthropic.com"
+        )
+    
     if not api_key:
         st.warning("Please enter your Anthropic API key to continue")
         st.stop()
