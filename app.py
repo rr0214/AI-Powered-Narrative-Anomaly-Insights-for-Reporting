@@ -171,7 +171,7 @@ async def analyze_with_claude(df: pd.DataFrame, anomalies: List[Dict], client: A
                             "next_steps": {"type": "string"},
                             "z_score": {"type": "number"}
                         },
-                        "required": ["metric", "current_value", "risk_level", "explanation", "next_steps", "z_score"]
+                                                                "required": ["metric", "current_value", "risk_level", "explanation", "next_steps", "z_score"]
                     }
                 },
                 "total_anomalies_found": {"type": "integer"},
