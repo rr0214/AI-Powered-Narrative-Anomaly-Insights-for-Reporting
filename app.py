@@ -468,39 +468,72 @@ def main():
                             }
                         }
                         
-                        # Calculate specific variances for the prompt
-                        current_quarter = df_with_changes.iloc[-1]
-                        previous_quarter = df_with_changes.iloc[-2] if len(df_with_changes) > 1 else current_quarter
-                        
-                        # Pre-calculate key variances to inject into prompt
-                        revenue_change = current_quarter.get('Total_Revenue_M', 0) - previous_quarter.get('Total_Revenue_M', 0)
-                        revenue_pct = (revenue_change / previous_quarter.get('Total_Revenue_M', 1)) * 100 if previous_quarter.get('Total_Revenue_M', 0) != 0 else 0
-                        
-                        opex_change = current_quarter.get('Operating_Expenses_M', 0) - previous_quarter.get('Operating_Expenses_M', 0)
-                        opex_pct = (opex_change / previous_quarter.get('Operating_Expenses_M', 1)) * 100 if previous_quarter.get('Operating_Expenses_M', 0) != 0 else 0
-                        
-                        # Enhanced prompt requiring specific calculations
-                        prompt = f"""Analyze this quarterly financial data with MANDATORY specific calculations.
+def clean_ai_text(text: str) -> str:
+    """Aggressively clean formatting issues in AI-generated text"""
+    if not text:
+        return text
+    
+    import re
+    
+    # Remove all markdown formatting
+    text = re.sub(r'\*+', '', text)  # Remove all asterisks
+    text = re.sub(r'_+', '', text)   # Remove underscores
+    text = re.sub(r'#+', '', text)   # Remove hashtags
+    
+    # Fix number formatting issues
+    text = re.sub(r'(\d+\.?\d*)M\(', r'\1M (', text)  # Add space before parentheses
+    text = re.sub(r'(\d+\.?\d*)\(', r'\1 (', text)    # Space before any parentheses
+    text = re.sub(r'\)(\w)', r') \1', text)           # Space after closing parentheses
+    text = re.sub(r'(\d)([A-Z])', r'\1 \2', text)     # Space between numbers and letters
+    text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)  # Space between camelCase
+    
+    # Fix sentence structure
+    text = re.sub(r'\.([A-Z])', r'. \1', text)        # Space after periods
+    text = re.sub(r',([A-Z])', r', \1', text)         # Space after commas
+    text = re.sub(r':([A-Z])', r': \1', text)         # Space after colons
+    
+    # Fix specific formatting patterns
+    text = re.sub(r'M\.([A-Z])', r'M. \1', text)      # Space after currency and period
+    text = re.sub(r'%)\.', r'%). ', text)             # Space after percentage and period
+    text = re.sub(r'%\)', r'%)', text)                # Fix percentage format
+    
+    # Remove duplicate spaces
+    text = re.sub(r'\s+', ' ', text)
+    
+    # Fix punctuation spacing
+    text = re.sub(r' \.', '.', text)  # Remove space before period
+    text = re.sub(r' ,', ',', text)   # Remove space before comma
+    
+    # Ensure sentences end properly
+    if text and not text.endswith('.'):
+        text += '.'
+    
+    return text.strip()
 
-YOU MUST INCLUDE THESE EXACT CALCULATIONS IN YOUR NARRATIVE:
+                        # Enhanced prompt with explicit plain text requirements
+                        prompt = f"""Generate financial analysis in CLEAN PLAIN TEXT ONLY.
 
-Revenue Analysis:
-- Total Revenue: ${current_quarter.get('Total_Revenue_M', 0):.1f}M (vs ${previous_quarter.get('Total_Revenue_M', 0):.1f}M = {revenue_change:+.1f}M or {revenue_pct:+.1f}%)
-- APAC: ${current_quarter.get('APAC_Revenue_M', 0):.1f}M (vs ${previous_quarter.get('APAC_Revenue_M', 0):.1f}M)
-- Americas: ${current_quarter.get('Americas_Revenue_M', 0):.1f}M (vs ${previous_quarter.get('Americas_Revenue_M', 0):.1f}M)  
-- EMEA: ${current_quarter.get('EMEA_Revenue_M', 0):.1f}M (vs ${previous_quarter.get('EMEA_Revenue_M', 0):.1f}M)
+FORMATTING RULES - ABSOLUTELY CRITICAL:
+- Write normal sentences with proper spacing
+- Use standard keyboard characters only: a-z A-Z 0-9 . , ( ) $ % - space
+- NO asterisks, underscores, or special symbols
+- Put spaces after periods, commas, and parentheses
+- Write like a professional business email
 
-Cost Analysis:
-- Operating Expenses: ${current_quarter.get('Operating_Expenses_M', 0):.1f}M (vs ${previous_quarter.get('Operating_Expenses_M', 0):.1f}M = {opex_change:+.1f}M or {opex_pct:+.1f}%)
+CONTENT REQUIREMENTS:
+Use these exact pre-calculated numbers:
+- Revenue change: {revenue_change:+.1f}M ({revenue_pct:+.1f}%)
+- OpEx change: {opex_change:+.1f}M ({opex_pct:+.1f}%)
+- Current revenue: ${current_quarter.get('Total_Revenue_M', 0):.1f}M
+- Previous revenue: ${previous_quarter.get('Total_Revenue_M', 0):.1f}M
 
-FORBIDDEN WORDS: "significant," "notable," "challenges," "escalating" - USE NUMBERS ONLY
+EXAMPLE CORRECT OUTPUT:
+"Revenue declined $3.2M (-6.1%) from $52.3M to $49.1M. Regional performance varied with APAC dropping $2.6M (-16.5%) while Americas remained stable. Operating expenses increased $16.3M (+41.9%) to $55.2M."
 
-REQUIRED FORMAT: "Revenue declined $X.XM (-X.X%) from $Y.YM to $Z.ZM"
+Your Data: {json.dumps(data_summary['latest_quarter'], indent=2)}
+Anomalies: {json.dumps(anomalies, indent=2)}
 
-Current Quarter Data: {json.dumps(data_summary['latest_quarter'], indent=2)}
-Statistical Anomalies: {json.dumps(anomalies, indent=2)}
-
-Generate analysis using financial_analysis tool with mandatory numerical precision."""
+Generate clean, readable analysis using financial_analysis tool."""
 
                         response = client.messages.create(
                             model="claude-3-5-haiku-20241022",
@@ -543,21 +576,25 @@ Generate analysis using financial_analysis tool with mandatory numerical precisi
                             
                         tool_result["analysis_timestamp"] = datetime.now().isoformat()
                         
-                        # Validate and clean anomalies with automatic truncation
+                        # Validate and clean anomalies with automatic truncation and text cleanup
                         cleaned_anomalies = []
                         for anomaly in tool_result["anomalies"]:
                             cleaned_anomaly = {
-                                "metric": anomaly.get("metric", "Unknown"),
-                                "current_value": anomaly.get("current_value", "N/A"),
-                                "comparison_value": anomaly.get("comparison_value", "N/A"),
-                                "change_percent": anomaly.get("change_percent", "N/A"),
+                                "metric": clean_ai_text(str(anomaly.get("metric", "Unknown"))),
+                                "current_value": clean_ai_text(str(anomaly.get("current_value", "N/A"))),
+                                "comparison_value": clean_ai_text(str(anomaly.get("comparison_value", "N/A"))),
+                                "change_percent": clean_ai_text(str(anomaly.get("change_percent", "N/A"))),
                                 "risk_level": anomaly.get("risk_level", "Medium"),
-                                "explanation": str(anomaly.get("explanation", "Statistical anomaly detected"))[:200],
-                                "next_steps": str(anomaly.get("next_steps", "Review data for accuracy"))[:150],
+                                "explanation": clean_ai_text(str(anomaly.get("explanation", "Statistical anomaly detected")))[:200],
+                                "next_steps": clean_ai_text(str(anomaly.get("next_steps", "Review data for accuracy")))[:150],
                                 "z_score": float(anomaly.get("z_score", 2.0))
                             }
                             cleaned_anomalies.append(cleaned_anomaly)
                         tool_result["anomalies"] = cleaned_anomalies
+                        
+                        # Clean the executive summary text too
+                        if "executive_summary" in tool_result:
+                            tool_result["executive_summary"]["narrative"] = clean_ai_text(tool_result["executive_summary"]["narrative"])
                         
                         st.write("**Final Processed Data:**")
                         st.json(tool_result)
