@@ -41,8 +41,8 @@ class FinancialAnalysis(BaseModel):
     analysis_timestamp: str
 
 # Initialize Anthropic client
-@st.cache_resource
 def get_anthropic_client():
+    """Get Anthropic client with API key validation"""
     try:
         api_key = st.secrets.get("ANTHROPIC_API_KEY")
     except:
@@ -55,8 +55,9 @@ def get_anthropic_client():
         )
     
     if not api_key:
-        st.warning("Please enter your Anthropic API key to continue")
+        st.warning("Please enter your Anthropic API key in the sidebar to continue")
         st.stop()
+    
     return Anthropic(api_key=api_key)
 
 # Database setup for audit trail
@@ -275,13 +276,13 @@ def export_to_word(analysis: FinancialAnalysis, filename: str = "financial_analy
 # Streamlit App
 def main():
     st.set_page_config(
-        page_title="Workiva AI Demo",
+        page_title="AI Anomaly Detection and Summarization for Reporting",
         page_icon="📊",
         layout="wide"
     )
     
-    st.title("🚀 AI-Powered Narrative & Anomaly Insights")
-    st.markdown("*Generate executive-ready narratives and detect anomalies from financial data*")
+    st.title("🚀 AI Anomaly Detection and Summarization for Reporting")
+    st.markdown("*Automatically generate executive summaries and detect statistical anomalies from financial data*")
     
     # Initialize database
     conn = init_database()
@@ -530,7 +531,7 @@ Use only the provided numbers. Focus on actionable insights."""
     
     # Footer
     st.markdown("---")
-    st.markdown("*Built for Workiva AI Demo - Enterprise-grade financial analysis with full audit trail*")
+    st.markdown("*AI-powered anomaly detection and summarization for enterprise reporting*")
 
 if __name__ == "__main__":
     main()
