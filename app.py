@@ -114,43 +114,6 @@ def detect_anomalies(df: pd.DataFrame, threshold: float = 2.0) -> List[Dict[str,
     
     return anomalies
 
-# Anomaly detection functions
-def detect_anomalies(df: pd.DataFrame, threshold: float = 2.0) -> List[Dict[str, Any]]:
-    """Detect statistical anomalies using z-score method"""
-    anomalies = []
-    
-    # Get numeric columns only
-    numeric_cols = df.select_dtypes(include=[np.number]).columns
-    
-    for col in numeric_cols:
-        if len(df[col].dropna()) < 2:  # Skip if insufficient data
-            continue
-            
-        # Calculate z-scores
-        mean_val = df[col].mean()
-        std_val = df[col].std()
-        
-        if std_val == 0:  # Skip if no variation
-            continue
-            
-        z_scores = np.abs((df[col] - mean_val) / std_val)
-        
-        # Find outliers
-        outlier_indices = z_scores >= threshold
-        
-        if outlier_indices.any():
-            for idx in df[outlier_indices].index:
-                anomalies.append({
-                    'metric': col,
-                    'index': idx,
-                    'value': df.loc[idx, col],
-                    'z_score': z_scores.loc[idx],
-                    'mean': mean_val,
-                    'std': std_val
-                })
-    
-    return anomalies
-
 def calculate_qoq_changes(df: pd.DataFrame) -> pd.DataFrame:
     """Calculate quarter-over-quarter changes"""
     if 'Quarter' not in df.columns:
@@ -164,48 +127,6 @@ def calculate_qoq_changes(df: pd.DataFrame) -> pd.DataFrame:
         df_sorted[f'{col}_QoQ_Abs_Change'] = df_sorted[col].diff()
     
     return df_sorted
-
-def clean_ai_text(text: str) -> str:
-    """Aggressively clean formatting issues in AI-generated text"""
-    if not text:
-        return text
-    
-    import re
-    
-    # Remove all markdown formatting
-    text = re.sub(r'\*+', '', text)  # Remove all asterisks
-    text = re.sub(r'_+', '', text)   # Remove underscores
-    text = re.sub(r'#+', '', text)   # Remove hashtags
-    
-    # Fix number formatting issues
-    text = re.sub(r'(\d+\.?\d*)M\(', r'\1M (', text)  # Add space before parentheses
-    text = re.sub(r'(\d+\.?\d*)\(', r'\1 (', text)    # Space before any parentheses
-    text = re.sub(r'\)(\w)', r') \1', text)           # Space after closing parentheses
-    text = re.sub(r'(\d)([A-Z])', r'\1 \2', text)     # Space between numbers and letters
-    text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)  # Space between camelCase
-    
-    # Fix sentence structure
-    text = re.sub(r'\.([A-Z])', r'. \1', text)        # Space after periods
-    text = re.sub(r',([A-Z])', r', \1', text)         # Space after commas
-    text = re.sub(r':([A-Z])', r': \1', text)         # Space after colons
-    
-    # Fix specific formatting patterns
-    text = re.sub(r'M\.([A-Z])', r'M. \1', text)      # Space after currency and period
-    text = re.sub(r'%)\.', r'%). ', text)             # Space after percentage and period
-    text = re.sub(r'%\)', r'%)', text)                # Fix percentage format
-    
-    # Remove duplicate spaces
-    text = re.sub(r'\s+', ' ', text)
-    
-    # Fix punctuation spacing
-    text = re.sub(r' \.', '.', text)  # Remove space before period
-    text = re.sub(r' ,', ',', text)   # Remove space before comma
-    
-    # Ensure sentences end properly
-    if text and not text.endswith('.'):
-        text += '.'
-    
-    return text.strip()
 
 def safe_column_match(metric_name: str, df_columns: List[str]) -> str:
     """Safely match anomaly metric names to actual DataFrame columns"""
@@ -305,88 +226,50 @@ Key Metrics Referenced:
     
     return report
 
-def export_to_word(analysis: FinancialAnalysis) -> bytes:
-    """Export analysis to Word document with error handling"""
-    try:
-        doc = Document()
+def export_to_word(analysis: FinancialAnalysis, filename: str = "financial_analysis.docx"):
+    """Export analysis to Word document"""
+    doc = Document()
+    
+    # Title
+    title = doc.add_heading('Quarterly Financial Analysis', 0)
+    
+    # Executive Summary
+    doc.add_heading('Executive Summary', level=1)
+    doc.add_paragraph(analysis.executive_summary.narrative)
+    
+    # Key Metrics
+    doc.add_heading('Key Metrics', level=2)
+    for metric in analysis.executive_summary.key_metrics:
+        doc.add_paragraph(f"• {metric}", style='List Bullet')
+    
+    # Anomalies Section
+    if analysis.anomalies:
+        doc.add_heading('Risk & Anomaly Analysis', level=1)
         
-        # Title
-        doc.add_heading('Quarterly Financial Analysis Report', 0)
-        
-        # Executive Summary
-        doc.add_heading('Executive Summary', level=1)
-        doc.add_paragraph(analysis.executive_summary.narrative)
-        
-        # Key Metrics Section
-        if analysis.executive_summary.key_metrics:
-            doc.add_heading('Key Metrics Analyzed', level=2)
-            for metric in analysis.executive_summary.key_metrics:
-                p = doc.add_paragraph()
-                p.add_run(f"• {metric}")
-        
-        # Anomalies Section
-        if analysis.anomalies:
-            doc.add_heading('Risk & Anomaly Analysis', level=1)
-            
-            for i, anomaly in enumerate(analysis.anomalies, 1):
-                # Anomaly heading
-                doc.add_heading(f'Anomaly {i}: {anomaly.metric}', level=2)
-                
-                # Current value
-                doc.add_paragraph(f"Current Value: {anomaly.current_value}")
-                
-                # Previous value if available
-                if anomaly.comparison_value and anomaly.comparison_value != "N/A":
-                    doc.add_paragraph(f"Previous Value: {anomaly.comparison_value}")
-                
-                # Change if available  
-                if anomaly.change_percent and anomaly.change_percent != "N/A":
-                    doc.add_paragraph(f"Change: {anomaly.change_percent}")
-                
-                # Risk and analysis
-                doc.add_paragraph(f"Risk Level: {anomaly.risk_level}")
-                doc.add_paragraph(f"Business Analysis: {anomaly.explanation}")
-                doc.add_paragraph(f"Recommended Actions: {anomaly.next_steps}")
-                doc.add_paragraph(f"Statistical Confidence: Z-score = {anomaly.z_score:.2f}")
-        
-        # Audit Information
-        doc.add_heading('Analysis Metadata', level=1)
-        doc.add_paragraph(f"Generated: {analysis.analysis_timestamp}")
-        doc.add_paragraph(f"Total Anomalies Detected: {analysis.total_anomalies_found}")
-        
-        if analysis.executive_summary.data_sources:
-            doc.add_paragraph(f"Data Sources: {', '.join(analysis.executive_summary.data_sources)}")
-        
-        # Convert to bytes for download
-        doc_buffer = io.BytesIO()
-        doc.save(doc_buffer)
-        doc_buffer.seek(0)
-        
-        return doc_buffer.getvalue()
-        
-    except Exception as e:
-        # Return a simple text document if Word generation fails
-        simple_report = f"""FINANCIAL ANALYSIS REPORT
-Generated: {analysis.analysis_timestamp}
-
-EXECUTIVE SUMMARY:
-{analysis.executive_summary.narrative}
-
-ANOMALIES DETECTED: {analysis.total_anomalies_found}
-"""
-        
-        if analysis.anomalies:
-            for i, anomaly in enumerate(analysis.anomalies, 1):
-                simple_report += f"""
-ANOMALY {i}: {anomaly.metric}
-- Current Value: {anomaly.current_value}
-- Risk Level: {anomaly.risk_level}  
-- Analysis: {anomaly.explanation}
-- Next Steps: {anomaly.next_steps}
-- Z-Score: {anomaly.z_score:.2f}
-"""
-        
-        return simple_report.encode('utf-8')
+        for i, anomaly in enumerate(analysis.anomalies, 1):
+            doc.add_heading(f'Anomaly {i}: {anomaly.metric}', level=2)
+            doc.add_paragraph(f"Current Value: {anomaly.current_value}")
+            if anomaly.comparison_value and anomaly.comparison_value != "N/A":
+                doc.add_paragraph(f"Previous Value: {anomaly.comparison_value}")
+            if anomaly.change_percent and anomaly.change_percent != "N/A":
+                doc.add_paragraph(f"Change: {anomaly.change_percent}")
+            doc.add_paragraph(f"Risk Level: {anomaly.risk_level}")
+            doc.add_paragraph(f"Analysis: {anomaly.explanation}")
+            doc.add_paragraph(f"Recommended Actions: {anomaly.next_steps}")
+            doc.add_paragraph(f"Statistical Confidence: z-score = {anomaly.z_score:.2f}")
+    
+    # Audit Information
+    doc.add_heading('Audit Trail', level=1)
+    doc.add_paragraph(f"Analysis Generated: {analysis.analysis_timestamp}")
+    doc.add_paragraph(f"Total Anomalies Detected: {analysis.total_anomalies_found}")
+    doc.add_paragraph("Data Sources: " + ", ".join(analysis.executive_summary.data_sources))
+    
+    # Save to bytes
+    doc_bytes = io.BytesIO()
+    doc.save(doc_bytes)
+    doc_bytes.seek(0)
+    
+    return doc_bytes.getvalue()
 
 # Main Streamlit App
 def main():
@@ -547,138 +430,68 @@ def main():
                             }
                         }
                         
-def clean_ai_text(text: str) -> str:
-    """Aggressively clean formatting issues in AI-generated text"""
-    if not text:
-        return text
-    
-    import re
-    
-    # Remove all markdown formatting
-    text = re.sub(r'\*+', '', text)  # Remove all asterisks
-    text = re.sub(r'_+', '', text)   # Remove underscores
-    text = re.sub(r'#+', '', text)   # Remove hashtags
-    
-    # Fix number formatting issues
-    text = re.sub(r'(\d+\.?\d*)M\(', r'\1M (', text)  # Add space before parentheses
-    text = re.sub(r'(\d+\.?\d*)\(', r'\1 (', text)    # Space before any parentheses
-    text = re.sub(r'\)(\w)', r') \1', text)           # Space after closing parentheses
-    text = re.sub(r'(\d)([A-Z])', r'\1 \2', text)     # Space between numbers and letters
-    text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)  # Space between camelCase
-    
-    # Fix sentence structure
-    text = re.sub(r'\.([A-Z])', r'. \1', text)        # Space after periods
-    text = re.sub(r',([A-Z])', r', \1', text)         # Space after commas
-    text = re.sub(r':([A-Z])', r': \1', text)         # Space after colons
-    
-    # Fix specific formatting patterns
-    text = re.sub(r'M\.([A-Z])', r'M. \1', text)      # Space after currency and period
-    text = re.sub(r'%)\.', r'%). ', text)             # Space after percentage and period
-    text = re.sub(r'%\)', r'%)', text)                # Fix percentage format
-    
-    # Remove duplicate spaces
-    text = re.sub(r'\s+', ' ', text)
-    
-    # Fix punctuation spacing
-    text = re.sub(r' \.', '.', text)  # Remove space before period
-    text = re.sub(r' ,', ',', text)   # Remove space before comma
-    
-    # Ensure sentences end properly
-    if text and not text.endswith('.'):
-        text += '.'
-    
-    return text.strip()
+                        # Few-shot prompt with counter-examples and formatting requirements
+                        prompt = f"""Analyze quarterly financial data. Follow these formatting patterns:
 
-                        # Enhanced prompt with explicit plain text requirements
-                        prompt = f"""Generate financial analysis in CLEAN PLAIN TEXT ONLY.
+CORRECT FORMAT: "Total revenue reached $45.2M in Q3 2024, with Americas contributing $26.5M, APAC $13.2M, and EMEA $9.4M."
+WRONG FORMAT: "Total revenue reached 45.2Min2024−Q3,withAmericascontributing26.5M"
 
-FORMATTING RULES - ABSOLUTELY CRITICAL:
-- Write normal sentences with proper spacing
-- Use standard keyboard characters only: a-z A-Z 0-9 . , ( ) $ % - space
-- NO asterisks, underscores, or special symbols
-- Put spaces after periods, commas, and parentheses
-- Write like a professional business email
+CORRECT BUSINESS TONE: "Operating expenses exceeded revenue by $6.1M, resulting in a net loss and requiring immediate cost management."
+WRONG TONE: "Operating expenses were high and caused problems."
 
-CONTENT REQUIREMENTS:
-Use these exact pre-calculated numbers:
-- Revenue change: {revenue_change:+.1f}M ({revenue_pct:+.1f}%)
-- OpEx change: {opex_change:+.1f}M ({opex_pct:+.1f}%)
-- Current revenue: ${current_quarter.get('Total_Revenue_M', 0):.1f}M
-- Previous revenue: ${previous_quarter.get('Total_Revenue_M', 0):.1f}M
+=== ANALYSIS REQUIREMENTS ===
+Current Quarter Data: {json.dumps(data_summary['latest_quarter'], indent=2)}
+Statistical Anomalies: {json.dumps(anomalies, indent=2)}
 
-EXAMPLE CORRECT OUTPUT:
-"Revenue declined $3.2M (-6.1%) from $52.3M to $49.1M. Regional performance varied with APAC dropping $2.6M (-16.5%) while Americas remained stable. Operating expenses increased $16.3M (+41.9%) to $55.2M."
+Instructions:
+1. Write in clear, executive-ready language
+2. Use proper spacing and punctuation  
+3. Format numbers as currency ($X.XM) with proper spacing
+4. Lead with the most critical business insights
+5. Each explanation: under 200 characters, professional tone
+6. Each next step: under 150 characters, actionable
+7. Use ONLY the provided numbers - no calculations or estimates
 
-Your Data: {json.dumps(data_summary['latest_quarter'], indent=2)}
-Anomalies: {json.dumps(anomalies, indent=2)}
-
-Generate clean, readable analysis using financial_analysis tool."""
+Generate structured analysis using the financial_analysis tool."""
 
                         response = client.messages.create(
                             model="claude-3-5-haiku-20241022",
-                            max_tokens=1500,
-                            temperature=0.1,
+                            max_tokens=1500,  # Reduced for cost control
+                            temperature=0.1,  # Low temperature for determinism
                             tools=[analysis_tool],
                             messages=[{"role": "user", "content": prompt}]
                         )
-                        
-                        # Debug: Show what Claude actually returned
-                        st.write("**Debug - Claude Response:**")
-                        st.json(response.model_dump())
                         
                         # Parse response with enhanced error handling
                         tool_result = None
                         for content in response.content:
                             if content.type == "tool_use":
                                 tool_result = content.input
-                                st.write("**Tool Input Found:**")
-                                st.json(tool_result)
                                 break
                         
-                        if not tool_result:
-                            st.error("Claude did not return structured data. Check the debug info above.")
-                            st.stop()
-                        
-                        # Add required fields with defaults if missing
-                        if "executive_summary" not in tool_result:
-                            tool_result["executive_summary"] = {
-                                "narrative": "Analysis complete - review anomalies below",
-                                "key_metrics": [col for col in df.columns if df[col].dtype in ['int64', 'float64']][:3],
-                                "data_sources": df.columns.tolist()[:3]
-                            }
-                        
-                        if "anomalies" not in tool_result:
-                            tool_result["anomalies"] = []
-                        
-                        if "total_anomalies_found" not in tool_result:
-                            tool_result["total_anomalies_found"] = len(anomalies)
+                        if tool_result:
+                            # Add timestamp and ensure required fields exist
+                            tool_result["analysis_timestamp"] = datetime.now().isoformat()
                             
-                        tool_result["analysis_timestamp"] = datetime.now().isoformat()
-                        
-                        # Validate and clean anomalies with automatic truncation and text cleanup
-                        cleaned_anomalies = []
-                        for anomaly in tool_result["anomalies"]:
-                            cleaned_anomaly = {
-                                "metric": clean_ai_text(str(anomaly.get("metric", "Unknown"))),
-                                "current_value": clean_ai_text(str(anomaly.get("current_value", "N/A"))),
-                                "comparison_value": clean_ai_text(str(anomaly.get("comparison_value", "N/A"))),
-                                "change_percent": clean_ai_text(str(anomaly.get("change_percent", "N/A"))),
-                                "risk_level": anomaly.get("risk_level", "Medium"),
-                                "explanation": clean_ai_text(str(anomaly.get("explanation", "Statistical anomaly detected")))[:200],
-                                "next_steps": clean_ai_text(str(anomaly.get("next_steps", "Review data for accuracy")))[:150],
-                                "z_score": float(anomaly.get("z_score", 2.0))
-                            }
-                            cleaned_anomalies.append(cleaned_anomaly)
-                        tool_result["anomalies"] = cleaned_anomalies
-                        
-                        # Clean the executive summary text too
-                        if "executive_summary" in tool_result:
-                            tool_result["executive_summary"]["narrative"] = clean_ai_text(tool_result["executive_summary"]["narrative"])
-                        
-                        st.write("**Final Processed Data:**")
-                        st.json(tool_result)
-                        
-                        analysis = FinancialAnalysis(**tool_result)
+                            # Validate and clean anomalies with automatic truncation
+                            if "anomalies" in tool_result:
+                                cleaned_anomalies = []
+                                for anomaly in tool_result["anomalies"]:
+                                    # Ensure all required fields exist with defaults and truncation
+                                    cleaned_anomaly = {
+                                        "metric": anomaly.get("metric", "Unknown"),
+                                        "current_value": anomaly.get("current_value", "N/A"),
+                                        "comparison_value": anomaly.get("comparison_value", "N/A"),
+                                        "change_percent": anomaly.get("change_percent", "N/A"),
+                                        "risk_level": anomaly.get("risk_level", "Medium"),
+                                        "explanation": anomaly.get("explanation", "Statistical anomaly detected")[:200],  # Truncate to 200 chars
+                                        "next_steps": anomaly.get("next_steps", "Review data for accuracy")[:150],  # Truncate to 150 chars
+                                        "z_score": float(anomaly.get("z_score", 2.0))
+                                    }
+                                    cleaned_anomalies.append(cleaned_anomaly)
+                                tool_result["anomalies"] = cleaned_anomalies
+                            
+                            analysis = FinancialAnalysis(**tool_result)
                     
                     except Exception as e:
                         st.error(f"Error generating analysis: {str(e)}")
