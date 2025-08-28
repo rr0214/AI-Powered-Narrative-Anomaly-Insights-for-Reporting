@@ -78,8 +78,8 @@ def init_database():
     return conn
 
 # Anomaly detection functions
-def detect_anomalies(df: pd.DataFrame, threshold: float = 2.0) -> List[Dict[str, Any]]:
-    """Detect statistical anomalies using z-score method"""
+def detect_anomalies(df: pd.DataFrame, threshold: float = 2.0) -> Dict[str, Any]:
+    """Detect statistical anomalies using z-score and IQR methods"""
     anomalies = []
     
     # Get numeric columns only
@@ -127,6 +127,145 @@ def calculate_qoq_changes(df: pd.DataFrame) -> pd.DataFrame:
         df_sorted[f'{col}_QoQ_Abs_Change'] = df_sorted[col].diff()
     
     return df_sorted
+
+# LLM Analysis
+async def analyze_with_claude(df: pd.DataFrame, anomalies: List[Dict], client: Anthropic) -> FinancialAnalysis:
+    """Generate analysis using Claude Haiku with function calling"""
+    
+    # Prepare data summary
+    data_summary = {
+        'columns': df.columns.tolist(),
+        'shape': df.shape,
+        'numeric_summary': df.describe().to_dict(),
+        'latest_quarter': df.iloc[-1].to_dict() if len(df) > 0 else {},
+        'anomalies_detected': len(anomalies)
+    }
+    
+    # Create the analysis tool
+    analysis_tool = {
+        "name": "financial_analysis",
+        "description": "Analyze quarterly financial data and generate executive summary with anomaly explanations",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "executive_summary": {
+                    "type": "object",
+                    "properties": {
+                        "narrative": {"type": "string", "description": "3-5 sentence executive summary"},
+                        "key_metrics": {"type": "array", "items": {"type": "string"}},
+                        "data_sources": {"type": "array", "items": {"type": "string"}}
+                    },
+                    "required": ["narrative", "key_metrics", "data_sources"]
+                },
+                "anomalies": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "metric": {"type": "string"},
+                            "current_value": {"type": "string"},
+                            "comparison_value": {"type": "string"},
+                            "change_percent": {"type": "string"},
+                            "risk_level": {"type": "string", "enum": ["High", "Medium", "Low"]},
+                            "explanation": {"type": "string", "maxLength": 80},
+                            "next_steps": {"type": "string"},
+                            "z_score": {"type": "number"}
+                        },
+                                                                "required": ["metric", "current_value", "risk_level", "explanation", "next_steps", "z_score"]
+                    }
+                },
+                "total_anomalies_found": {"type": "integer"},
+                "analysis_timestamp": {"type": "string"}
+            },
+            "required": ["executive_summary", "anomalies", "total_anomalies_found", "analysis_timestamp"]
+        }
+    }
+    
+    # Construct prompt
+    prompt = f"""You are analyzing quarterly financial data for executive reporting.
+
+Dataset Overview:
+- Columns: {data_summary['columns']}
+- Shape: {data_summary['shape']} (rows, columns)
+- Latest Quarter Data: {json.dumps(data_summary['latest_quarter'], indent=2)}
+
+Statistical Anomalies Detected: {len(anomalies)}
+{json.dumps(anomalies, indent=2) if anomalies else "None"}
+
+Instructions:
+1. Generate a 3-5 sentence executive summary highlighting key trends
+2. For each anomaly, provide business context and next steps  
+3. Use ONLY the numbers provided - no estimates or assumptions
+4. Focus on actionable insights for compliance managers
+5. Keep explanations under 80 words each
+
+Use the financial_analysis tool to structure your response."""
+
+    try:
+        response = client.messages.create(
+            model="claude-3-5-haiku-20241022",
+            max_tokens=2000,
+            tools=[analysis_tool],
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        # Extract tool use result
+        tool_result = None
+        for content in response.content:
+            if content.type == "tool_use":
+                tool_result = content.input
+                break
+        
+        if not tool_result:
+            st.error("Claude did not use the analysis tool properly")
+            return None
+            
+        # Convert to Pydantic model for validation
+        return FinancialAnalysis(**tool_result)
+        
+    except Exception as e:
+        st.error(f"Error calling Claude API: {str(e)}")
+        return None
+
+def create_provenance_mapping(df: pd.DataFrame, anomalies: List[Dict]) -> Dict[str, str]:
+    """Create mapping of values to their exact cell locations"""
+    provenance = {}
+    
+    # Map each value to its cell location
+    for row_idx, row in df.iterrows():
+        for col_name, value in row.items():
+            if pd.notna(value) and isinstance(value, (int, float)):
+                # Create Excel-style cell reference
+                col_letter = chr(65 + list(df.columns).index(col_name))  # A, B, C, etc.
+                cell_ref = f"{col_letter}{row_idx + 2}"  # +2 because Excel starts at 1 and has header
+                provenance[f"{value}"] = f"{col_name} (cell {cell_ref})"
+                provenance[f"{col_name}_{value}"] = f"cell {cell_ref}"
+    
+    return provenance
+
+def create_cell_reference_map(df: pd.DataFrame) -> Dict[str, str]:
+    """Create mapping of every value to Excel-style cell reference"""
+    cell_map = {}
+    
+    for row_idx, row in df.iterrows():
+        for col_idx, (col_name, value) in enumerate(row.items()):
+            if pd.notna(value):
+                # Excel-style cell reference (A1, B2, etc.)
+                col_letter = chr(65 + col_idx)  # A, B, C...
+                excel_row = row_idx + 2  # +2 for header and 1-indexed
+                cell_ref = f"{col_letter}{excel_row}"
+                
+                # Map value to cell location with multiple key formats
+                cell_map[f"{value}"] = f"{col_name} (cell {cell_ref})"
+                cell_map[f"{col_name}_{value}"] = f"cell {cell_ref}"
+                
+                # Also map formatted versions
+                if isinstance(value, (int, float)):
+                    cell_map[f"{value:,.0f}"] = f"{col_name} (cell {cell_ref})"
+                    cell_map[f"{value:,.1f}"] = f"{col_name} (cell {cell_ref})"
+                    cell_map[f"${value:,.0f}M"] = f"{col_name} (cell {cell_ref})"
+    
+    return cell_map
 
 def safe_column_match(metric_name: str, df_columns: List[str]) -> str:
     """Safely match anomaly metric names to actual DataFrame columns"""
@@ -225,7 +364,6 @@ Key Metrics Referenced:
     report += f"Data Integrity: All numbers traced to source\n"
     
     return report
-
 def export_to_word(analysis: FinancialAnalysis, filename: str = "financial_analysis.docx"):
     """Export analysis to Word document"""
     doc = Document()
@@ -249,9 +387,9 @@ def export_to_word(analysis: FinancialAnalysis, filename: str = "financial_analy
         for i, anomaly in enumerate(analysis.anomalies, 1):
             doc.add_heading(f'Anomaly {i}: {anomaly.metric}', level=2)
             doc.add_paragraph(f"Current Value: {anomaly.current_value}")
-            if anomaly.comparison_value and anomaly.comparison_value != "N/A":
+            if anomaly.comparison_value:
                 doc.add_paragraph(f"Previous Value: {anomaly.comparison_value}")
-            if anomaly.change_percent and anomaly.change_percent != "N/A":
+            if anomaly.change_percent:
                 doc.add_paragraph(f"Change: {anomaly.change_percent}")
             doc.add_paragraph(f"Risk Level: {anomaly.risk_level}")
             doc.add_paragraph(f"Analysis: {anomaly.explanation}")
@@ -271,7 +409,7 @@ def export_to_word(analysis: FinancialAnalysis, filename: str = "financial_analy
     
     return doc_bytes.getvalue()
 
-# Main Streamlit App
+# Streamlit App
 def main():
     st.set_page_config(
         page_title="AI Anomaly Detection and Summarization for Reporting",
@@ -282,19 +420,11 @@ def main():
     st.title("🚀 AI Anomaly Detection and Summarization for Reporting")
     st.markdown("*Automatically generate executive summaries and detect statistical anomalies from financial data*")
     
-    # Initialize database and client
+    # Initialize database
     conn = init_database()
     client = get_anthropic_client()
     
-    # File upload - define this first
-    st.header("📁 Upload Financial Data")
-    uploaded_file = st.file_uploader(
-        "Choose a CSV or Excel file", 
-        type=['csv', 'xlsx'],
-        help="Upload quarterly financial data for analysis"
-    )
-    
-    # Sidebar configuration - after file upload is defined
+    # Sidebar configuration with business-friendly controls
     st.sidebar.header("Detection Settings")
     
     # Business-friendly threshold selection
@@ -332,7 +462,28 @@ def main():
             st.write("• Use for: Monthly monitoring, trend analysis")
             st.write("• Risk: More false positives requiring review")
     
-    # Process uploaded file
+    # Show live preview of threshold impact
+    if uploaded_file is not None:
+        with st.sidebar.expander("Live Impact Preview"):
+            test_anomalies = detect_anomalies(df_with_changes, threshold=z_score_threshold)
+            st.metric("Anomalies at Current Setting", len(test_anomalies))
+            
+            # Compare with other thresholds
+            conservative_count = len(detect_anomalies(df_with_changes, threshold=3.0))
+            sensitive_count = len(detect_anomalies(df_with_changes, threshold=1.5))
+            
+            st.write(f"Conservative (3.0): {conservative_count} anomalies")
+            st.write(f"Moderate (2.0): {len(test_anomalies)} anomalies") 
+            st.write(f"Sensitive (1.5): {sensitive_count} anomalies")
+    
+    # File upload
+    st.header("📁 Upload Financial Data")
+    uploaded_file = st.file_uploader(
+        "Choose a CSV or Excel file", 
+        type=['csv', 'xlsx'],
+        help="Upload quarterly financial data for analysis"
+    )
+    
     if uploaded_file is not None:
         try:
             # Read file
@@ -343,22 +494,6 @@ def main():
             
             st.success(f"✅ File uploaded: {uploaded_file.name} ({df.shape[0]} rows, {df.shape[1]} columns)")
             
-            # Show live impact preview in sidebar now that we have data
-            with st.sidebar.expander("Live Impact Preview"):
-                try:
-                    # Calculate anomalies for each threshold
-                    conservative_anomalies = detect_anomalies(df, threshold=3.0)
-                    moderate_anomalies = detect_anomalies(df, threshold=2.0)
-                    sensitive_anomalies = detect_anomalies(df, threshold=1.5)
-                    current_anomalies = detect_anomalies(df, threshold=z_score_threshold)
-                    
-                    st.metric("Current Setting", len(current_anomalies))
-                    st.write(f"Conservative: {len(conservative_anomalies)} anomalies")
-                    st.write(f"Moderate: {len(moderate_anomalies)} anomalies")
-                    st.write(f"Sensitive: {len(sensitive_anomalies)} anomalies")
-                except Exception as e:
-                    st.write("Error calculating preview")
-            
             # Display data preview
             st.header("📊 Data Preview")
             st.dataframe(df.head())
@@ -366,7 +501,7 @@ def main():
             # Calculate QoQ changes
             df_with_changes = calculate_qoq_changes(df)
             
-            # Detect anomalies with current threshold
+            # Detect anomalies
             with st.spinner("🔍 Detecting anomalies..."):
                 anomalies = detect_anomalies(df_with_changes, threshold=z_score_threshold)
             
@@ -379,21 +514,27 @@ def main():
                         st.write(f"**Value:** {anomaly['value']:,.2f}")
                         st.write(f"**Dataset Mean:** {anomaly['mean']:,.2f}")
                         st.write(f"**Standard Deviation:** {anomaly['std']:,.2f}")
-                        st.write(f"**Risk Level:** {'High' if anomaly['z_score'] > 3 else 'Medium'}")
             else:
-                st.info("No significant anomalies detected with current threshold")
+                st.info("No significant anomalies detected")
             
             # Generate AI analysis
             if st.button("🤖 Generate AI Analysis", type="primary"):
                 with st.spinner("🧠 Analyzing with Claude Haiku..."):
                     
+                    # Note: Using sync version for Streamlit compatibility
+                    # In a real async environment, you'd use the async version
+                    analysis = None
+                    
                     try:
-                        # Prepare data for Claude with counter-examples
+                        # Prepare data for Claude
                         data_summary = {
+                            'columns': df.columns.tolist(),
+                            'shape': df.shape,
+                            'numeric_summary': df_with_changes.describe().to_dict(),
                             'latest_quarter': df_with_changes.iloc[-1].to_dict() if len(df_with_changes) > 0 else {},
                         }
                         
-                        # Create analysis tool schema
+                        # Simplified synchronous version
                         analysis_tool = {
                             "name": "financial_analysis",
                             "description": "Analyze financial data and generate structured insights",
@@ -418,8 +559,8 @@ def main():
                                                 "comparison_value": {"type": "string"},
                                                 "change_percent": {"type": "string"},
                                                 "risk_level": {"type": "string"},
-                                                "explanation": {"type": "string", "maxLength": 200},
-                                                "next_steps": {"type": "string", "maxLength": 150},
+                                                "explanation": {"type": "string"},
+                                                "next_steps": {"type": "string"},
                                                 "z_score": {"type": "number"}
                                             }
                                         }
@@ -430,29 +571,25 @@ def main():
                             }
                         }
                         
-                        # Few-shot prompt with counter-examples and formatting requirements
-                        prompt = f"""Analyze quarterly financial data. Follow these formatting patterns:
+                        prompt = f"""Analyze quarterly financial data. Follow these patterns:
 
-CORRECT FORMAT: "Total revenue reached $45.2M in Q3 2024, with Americas contributing $26.5M, APAC $13.2M, and EMEA $9.4M."
-WRONG FORMAT: "Total revenue reached 45.2Min2024−Q3,withAmericascontributing26.5M"
+CORRECT: "Revenue reached $45.2M" (uses exact provided number)
+WRONG: "Revenue grew 12%" (calculated percentage not provided)
 
-CORRECT BUSINESS TONE: "Operating expenses exceeded revenue by $6.1M, resulting in a net loss and requiring immediate cost management."
-WRONG TONE: "Operating expenses were high and caused problems."
+CORRECT: "Operating expenses at $35.8M exceeded normal range"  
+WRONG: "Due to new acquisitions and market expansion" (external context not provided)
 
-=== ANALYSIS REQUIREMENTS ===
-Current Quarter Data: {json.dumps(data_summary['latest_quarter'], indent=2)}
+=== YOUR DATA ===
+Current Quarter: {json.dumps(data_summary['latest_quarter'], indent=2)}
 Statistical Anomalies: {json.dumps(anomalies, indent=2)}
 
-Instructions:
-1. Write in clear, executive-ready language
-2. Use proper spacing and punctuation  
-3. Format numbers as currency ($X.XM) with proper spacing
-4. Lead with the most critical business insights
-5. Each explanation: under 200 characters, professional tone
-6. Each next step: under 150 characters, actionable
-7. Use ONLY the provided numbers - no calculations or estimates
+Requirements:
+1. Executive summary: 3-5 sentences using ONLY provided numbers
+2. Each anomaly: explanation under 200 chars, next steps under 150 chars
+3. Risk levels: High/Medium/Low only
+4. NO calculations, percentages, or external context unless explicitly provided
 
-Generate structured analysis using the financial_analysis tool."""
+Use the financial_analysis tool with exact schema compliance."""
 
                         response = client.messages.create(
                             model="claude-3-5-haiku-20241022",
@@ -462,7 +599,7 @@ Generate structured analysis using the financial_analysis tool."""
                             messages=[{"role": "user", "content": prompt}]
                         )
                         
-                        # Parse response with enhanced error handling
+                        # Parse response
                         tool_result = None
                         for content in response.content:
                             if content.type == "tool_use":
@@ -470,49 +607,30 @@ Generate structured analysis using the financial_analysis tool."""
                                 break
                         
                         if tool_result:
-                            # Add timestamp and ensure required fields exist
+                            # Add timestamp
                             tool_result["analysis_timestamp"] = datetime.now().isoformat()
-                            
-                            # Validate and clean anomalies with automatic truncation
-                            if "anomalies" in tool_result:
-                                cleaned_anomalies = []
-                                for anomaly in tool_result["anomalies"]:
-                                    # Ensure all required fields exist with defaults and truncation
-                                    cleaned_anomaly = {
-                                        "metric": anomaly.get("metric", "Unknown"),
-                                        "current_value": anomaly.get("current_value", "N/A"),
-                                        "comparison_value": anomaly.get("comparison_value", "N/A"),
-                                        "change_percent": anomaly.get("change_percent", "N/A"),
-                                        "risk_level": anomaly.get("risk_level", "Medium"),
-                                        "explanation": anomaly.get("explanation", "Statistical anomaly detected")[:200],  # Truncate to 200 chars
-                                        "next_steps": anomaly.get("next_steps", "Review data for accuracy")[:150],  # Truncate to 150 chars
-                                        "z_score": float(anomaly.get("z_score", 2.0))
-                                    }
-                                    cleaned_anomalies.append(cleaned_anomaly)
-                                tool_result["anomalies"] = cleaned_anomalies
-                            
                             analysis = FinancialAnalysis(**tool_result)
                     
                     except Exception as e:
                         st.error(f"Error generating analysis: {str(e)}")
-                        st.info("Using fallback analysis...")
+                        st.info("Falling back to basic analysis...")
                         
-                        # Simple fallback that will definitely work
+                        # Fallback analysis
                         analysis = FinancialAnalysis(
                             executive_summary=ExecutiveSummary(
-                                narrative=f"Quarterly analysis complete for {uploaded_file.name}. {len(anomalies)} statistical anomalies detected requiring review.",
+                                narrative="Analysis completed successfully. Review the detected anomalies for potential risks.",
                                 key_metrics=[col for col in df.columns if df[col].dtype in ['int64', 'float64']][:5],
                                 data_sources=df.columns.tolist()[:5]
                             ),
                             anomalies=[
                                 Anomaly(
                                     metric=anomaly['metric'],
-                                    current_value=f"${anomaly['value']:,.0f}M" if anomaly['value'] > 1000 else f"{anomaly['value']:,.2f}",
-                                    comparison_value="Previous period",
-                                    change_percent="See analysis", 
-                                    risk_level="High" if anomaly['z_score'] > 3 else "Medium",
-                                    explanation=f"Statistical outlier with z-score of {anomaly['z_score']:.1f} standard deviations from normal range",
-                                    next_steps="Review data source and validate business context for this unusual value",
+                                    current_value=f"{anomaly['value']:,.2f}",
+                                    comparison_value="N/A",
+                                    change_percent="N/A", 
+                                    risk_level="Medium" if anomaly['z_score'] < 3 else "High",
+                                    explanation=f"Statistical outlier detected with z-score of {anomaly['z_score']:.2f}",
+                                    next_steps="Review data source and validate business context",
                                     z_score=anomaly['z_score']
                                 ) for anomaly in anomalies[:5]  # Limit to 5 anomalies
                             ],
@@ -520,7 +638,7 @@ Generate structured analysis using the financial_analysis tool."""
                             analysis_timestamp=datetime.now().isoformat()
                         )
                 
-                if 'analysis' in locals() and analysis:
+                if analysis:
                     # Display results
                     st.header("📝 AI-Generated Analysis")
                     
@@ -568,74 +686,50 @@ Generate structured analysis using the financial_analysis tool."""
                     
                     with col1:
                         if st.button("📄 Download Word Report"):
-                            try:
-                                doc_bytes = export_to_word(analysis)
-                                st.download_button(
-                                    label="💾 Download DOCX",
-                                    data=doc_bytes,
-                                    file_name="financial_analysis_report.docx",
-                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                                )
-                            except Exception as e:
-                                st.error(f"Error generating Word document: {str(e)}")
+                            doc_bytes = export_to_word(analysis)
+                            st.download_button(
+                                label="💾 Download DOCX",
+                                data=doc_bytes,
+                                file_name="financial_analysis_report.docx",
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                            )
                     
                     with col2:
-                        try:
-                            json_data = analysis.model_dump_json(indent=2)
-                            st.download_button(
-                                label="📊 Download JSON",
-                                data=json_data,
-                                file_name="financial_analysis.json",
-                                mime="application/json"
-                            )
-                        except Exception as e:
-                            st.error(f"Error generating JSON: {str(e)}")
+                        json_data = analysis.model_dump_json(indent=2)
+                        st.download_button(
+                            label="📊 Download JSON",
+                            data=json_data,
+                            file_name="financial_analysis.json",
+                            mime="application/json"
+                        )
                     
                     with col3:
-                        try:
-                            audit_report = generate_audit_trail_report(analysis, df_with_changes, anomalies)
-                            st.download_button(
-                                label="🔍 Download Audit Trail", 
-                                data=audit_report,
-                                file_name="audit_trail_report.txt",
-                                mime="text/plain"
-                            )
-                        except Exception as e:
-                            st.error(f"Error generating audit trail: {str(e)}")
+                        audit_report = generate_audit_trail_report(analysis, df_with_changes, anomalies)
+                        st.download_button(
+                            label="🔍 Download Audit Trail", 
+                            data=audit_report,
+                            file_name="audit_trail_report.txt",
+                            mime="text/plain"
+                        )
                     
-                    # Log to database
-                    try:
-                        conn.execute('''
-                            INSERT INTO analysis_log 
-                            (timestamp, input_file_name, anomalies_detected, prompt_used, ai_response) 
-                            VALUES (?, ?, ?, ?, ?)
-                        ''', (
-                            datetime.now().isoformat(),
-                            uploaded_file.name,
-                            len(anomalies),
-                            "Financial analysis with counter-examples",
-                            json.dumps(analysis.model_dump(), indent=2)
-                        ))
-                        conn.commit()
-                        
-                        st.success("✅ Analysis complete! Audit trail logged.")
-                    except Exception as e:
-                        st.warning(f"Could not log to database: {str(e)}")
+                    # Audit trail
+                    conn.execute('''
+                        INSERT INTO analysis_log 
+                        (timestamp, input_file_name, anomalies_detected, prompt_used, ai_response) 
+                        VALUES (?, ?, ?, ?, ?)
+                    ''', (
+                        datetime.now().isoformat(),
+                        uploaded_file.name,
+                        len(anomalies),
+                        "Financial analysis prompt",
+                        json.dumps(analysis.model_dump(), indent=2)
+                    ))
+                    conn.commit()
+                    
+                    st.success("✅ Analysis complete! Audit trail logged.")
         
         except Exception as e:
             st.error(f"Error processing file: {str(e)}")
-            st.info("Please ensure your file is a valid CSV or Excel file with numeric data.")
-    
-    else:
-        # Show instructions when no file is uploaded
-        st.info("👆 Upload a CSV or Excel file to begin analysis")
-        
-        with st.expander("📋 Expected Data Format"):
-            st.write("Your file should contain:")
-            st.write("• **Quarterly data** with clear time periods")
-            st.write("• **Numeric columns** for financial metrics (Revenue, Expenses, etc.)")
-            st.write("• **Column headers** that clearly identify each metric")
-            st.write("• **Multiple quarters** for meaningful statistical analysis")
     
     # Footer
     st.markdown("---")
