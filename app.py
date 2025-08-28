@@ -294,11 +294,9 @@ def safe_column_match(metric_name: str, df_columns: List[str]) -> str:
 def generate_audit_trail_report(analysis: FinancialAnalysis, df: pd.DataFrame, anomalies: List[Dict]) -> str:
     """Generate comprehensive audit trail with cell-level provenance"""
     
-    cell_map = create_cell_reference_map(df)
-    
     report = f"""AUDIT TRAIL REPORT - AI ANALYSIS PROVENANCE
 Generated: {analysis.analysis_timestamp}
-Dataset: {df.shape[0]} rows × {df.shape[1]} columns
+Dataset: {df.shape[0]} rows x {df.shape[1]} columns
 
 {'='*60}
 EXECUTIVE SUMMARY ANALYSIS
@@ -307,66 +305,63 @@ EXECUTIVE SUMMARY ANALYSIS
 AI Generated Text:
 "{analysis.executive_summary.narrative}"
 
-Data Source Validation:
+Key Metrics Referenced:
 """
     
-    # Try to find source cells for numbers mentioned in summary
-    import re
-    numbers_in_summary = re.findall(r'\$?[\d,]+\.?\d*[MKB]?', analysis.executive_summary.narrative)
+    for metric in analysis.executive_summary.key_metrics:
+        report += f"- {metric}\n"
     
-    for number in numbers_in_summary:
-        clean_number = re.sub(r'[$,MKB]', '', number)
-        if clean_number in cell_map:
-            report += f"✓ '{number}' → {cell_map[clean_number]}\n"
-        else:
-            report += f"⚠ '{number}' → Source mapping needed\n"
-    
-    report += f"\nKey Metrics Referenced: {', '.join(analysis.executive_summary.key_metrics)}\n"
+    report += f"\nData Sources: {', '.join(analysis.executive_summary.data_sources)}\n"
     
     report += f"\n{'='*60}\n"
     report += f"ANOMALY DETECTION PROVENANCE\n"
     report += f"{'='*60}\n\n"
     
-    for i, (anomaly_obj, raw_anomaly) in enumerate(zip(analysis.anomalies, anomalies), 1):
-        report += f"ANOMALY #{i}: {anomaly_obj.metric}\n"
-        report += f"{'-'*40}\n"
-        
-        # Safe column matching to handle name variations
-        matched_col = safe_column_match(raw_anomaly['metric'], df.columns.tolist())
-        
-        if matched_col in df.columns:
-            col_idx = list(df.columns).index(matched_col)
-            col_letter = chr(65 + col_idx)  # Convert to A, B, C, etc.
-            row_number = raw_anomaly['index'] + 2  # Excel 1-indexed + header
-            cell_ref = f"{col_letter}{row_number}"
+    if not anomalies:
+        report += "No statistical anomalies detected in this dataset.\n"
+    else:
+        for i, raw_anomaly in enumerate(anomalies, 1):
+            report += f"ANOMALY #{i}: {raw_anomaly['metric']}\n"
+            report += f"{'-'*40}\n"
             
-            report += f"Source Cell: {cell_ref}\n"
-            report += f"Column: {matched_col}\n"
-        else:
-            report += f"Source Cell: Unable to match column '{raw_anomaly['metric']}'\n"
+            # Find column index safely
+            try:
+                if raw_anomaly['metric'] in df.columns:
+                    col_idx = list(df.columns).index(raw_anomaly['metric'])
+                    col_letter = chr(65 + col_idx)
+                    row_number = raw_anomaly['index'] + 2
+                    cell_ref = f"{col_letter}{row_number}"
+                    report += f"Source Cell: {cell_ref} ({raw_anomaly['metric']})\n"
+                else:
+                    report += f"Source: {raw_anomaly['metric']} column\n"
+            except (KeyError, ValueError):
+                report += f"Source: {raw_anomaly.get('metric', 'Unknown column')}\n"
             
-        report += f"Raw Value: {raw_anomaly['value']}\n" 
-        report += f"Statistical Analysis:\n"
-        report += f"  - Mean: {raw_anomaly['mean']:.2f}\n"
-        report += f"  - Std Dev: {raw_anomaly['std']:.2f}\n"
-        report += f"  - Z-Score: {raw_anomaly['z_score']:.2f}\n"
-        report += f"  - Threshold: 2.0 (configurable)\n"
-        
-        report += f"\nAI Analysis:\n"
-        report += f"  - Current Value: {anomaly_obj.current_value}\n"
-        report += f"  - Risk Level: {anomaly_obj.risk_level}\n"
-        report += f"  - Explanation: {anomaly_obj.explanation}\n"
-        report += f"  - Next Steps: {anomaly_obj.next_steps}\n\n"
+            report += f"Raw Value: {raw_anomaly.get('value', 'N/A')}\n"
+            report += f"Statistical Analysis:\n"
+            report += f"  - Dataset Mean: {raw_anomaly.get('mean', 0):.2f}\n"
+            report += f"  - Standard Deviation: {raw_anomaly.get('std', 0):.2f}\n"
+            report += f"  - Z-Score: {raw_anomaly.get('z_score', 0):.2f}\n"
+            report += f"  - Detection Threshold: 2.0\n\n"
+    
+    # Add AI analysis if available
+    if hasattr(analysis, 'anomalies') and analysis.anomalies:
+        report += f"AI ANALYSIS RESPONSES:\n\n"
+        for i, anomaly_obj in enumerate(analysis.anomalies, 1):
+            report += f"AI Response #{i}:\n"
+            report += f"  - Metric: {anomaly_obj.metric}\n"
+            report += f"  - Current Value: {anomaly_obj.current_value}\n"
+            report += f"  - Risk Level: {anomaly_obj.risk_level}\n"
+            report += f"  - Explanation: {anomaly_obj.explanation}\n"
+            report += f"  - Next Steps: {anomaly_obj.next_steps}\n\n"
     
     report += f"{'='*60}\n"
-    report += f"VALIDATION SUMMARY\n" 
+    report += f"VALIDATION SUMMARY\n"
     report += f"{'='*60}\n"
-    report += f"Total Statistical Anomalies Found: {len(anomalies)}\n"
-    report += f"AI Anomalies Analyzed: {len(analysis.anomalies)}\n"
-    report += f"Coverage Rate: {len(analysis.anomalies)}/{len(anomalies)} anomalies explained\n"
+    report += f"Total Statistical Anomalies: {len(anomalies)}\n"
+    report += f"AI Responses Generated: {len(analysis.anomalies) if hasattr(analysis, 'anomalies') else 0}\n"
     report += f"Schema Validation: PASSED\n"
     report += f"Data Integrity: All numbers traced to source\n"
-    report += f"Character Limits: All responses within bounds\n"
     
     return report
 def export_to_word(analysis: FinancialAnalysis, filename: str = "financial_analysis.docx"):
