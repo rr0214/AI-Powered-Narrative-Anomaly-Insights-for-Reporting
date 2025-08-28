@@ -449,6 +449,26 @@ def main():
             with st.spinner("Detecting anomalies..."):
                 anomalies = detect_anomalies(df_with_changes, threshold=z_score_threshold)
             
+            # Debug information to see what's happening
+            st.header("Debug Information")
+            with st.expander("Diagnostic Data"):
+                st.write(f"**Threshold setting:** {z_score_threshold}")
+                st.write(f"**Numeric columns found:** {df.select_dtypes(include=[np.number]).columns.tolist()}")
+                st.write(f"**Latest quarter data:**")
+                st.json(df_with_changes.iloc[-1].to_dict())
+                
+                # Manual anomaly calculation for Operating Expenses
+                if 'Operating_Expenses_M' in df.columns:
+                    opex_values = df['Operating_Expenses_M']
+                    opex_mean = opex_values.mean()
+                    opex_std = opex_values.std()
+                    latest_opex = opex_values.iloc[-1]
+                    opex_z = abs((latest_opex - opex_mean) / opex_std) if opex_std > 0 else 0
+                    st.write(f"**Operating Expenses Check:**")
+                    st.write(f"Latest value: ${latest_opex:.1f}M")
+                    st.write(f"Mean: ${opex_mean:.1f}M, Std: ${opex_std:.1f}M")
+                    st.write(f"Z-score: {opex_z:.2f} (should trigger if ≥{z_score_threshold})")
+            
             st.header("Anomalies Detected")
             if anomalies:
                 st.warning(f"Found {len(anomalies)} statistical anomalies")
