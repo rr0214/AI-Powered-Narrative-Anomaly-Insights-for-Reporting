@@ -226,50 +226,88 @@ Key Metrics Referenced:
     
     return report
 
-def export_to_word(analysis: FinancialAnalysis, filename: str = "financial_analysis.docx"):
-    """Export analysis to Word document"""
-    doc = Document()
-    
-    # Title
-    title = doc.add_heading('Quarterly Financial Analysis', 0)
-    
-    # Executive Summary
-    doc.add_heading('Executive Summary', level=1)
-    doc.add_paragraph(analysis.executive_summary.narrative)
-    
-    # Key Metrics
-    doc.add_heading('Key Metrics', level=2)
-    for metric in analysis.executive_summary.key_metrics:
-        doc.add_paragraph(f"• {metric}", style='List Bullet')
-    
-    # Anomalies Section
-    if analysis.anomalies:
-        doc.add_heading('Risk & Anomaly Analysis', level=1)
+def export_to_word(analysis: FinancialAnalysis) -> bytes:
+    """Export analysis to Word document with error handling"""
+    try:
+        doc = Document()
         
-        for i, anomaly in enumerate(analysis.anomalies, 1):
-            doc.add_heading(f'Anomaly {i}: {anomaly.metric}', level=2)
-            doc.add_paragraph(f"Current Value: {anomaly.current_value}")
-            if anomaly.comparison_value and anomaly.comparison_value != "N/A":
-                doc.add_paragraph(f"Previous Value: {anomaly.comparison_value}")
-            if anomaly.change_percent and anomaly.change_percent != "N/A":
-                doc.add_paragraph(f"Change: {anomaly.change_percent}")
-            doc.add_paragraph(f"Risk Level: {anomaly.risk_level}")
-            doc.add_paragraph(f"Analysis: {anomaly.explanation}")
-            doc.add_paragraph(f"Recommended Actions: {anomaly.next_steps}")
-            doc.add_paragraph(f"Statistical Confidence: z-score = {anomaly.z_score:.2f}")
-    
-    # Audit Information
-    doc.add_heading('Audit Trail', level=1)
-    doc.add_paragraph(f"Analysis Generated: {analysis.analysis_timestamp}")
-    doc.add_paragraph(f"Total Anomalies Detected: {analysis.total_anomalies_found}")
-    doc.add_paragraph("Data Sources: " + ", ".join(analysis.executive_summary.data_sources))
-    
-    # Save to bytes
-    doc_bytes = io.BytesIO()
-    doc.save(doc_bytes)
-    doc_bytes.seek(0)
-    
-    return doc_bytes.getvalue()
+        # Title
+        doc.add_heading('Quarterly Financial Analysis Report', 0)
+        
+        # Executive Summary
+        doc.add_heading('Executive Summary', level=1)
+        doc.add_paragraph(analysis.executive_summary.narrative)
+        
+        # Key Metrics Section
+        if analysis.executive_summary.key_metrics:
+            doc.add_heading('Key Metrics Analyzed', level=2)
+            for metric in analysis.executive_summary.key_metrics:
+                p = doc.add_paragraph()
+                p.add_run(f"• {metric}")
+        
+        # Anomalies Section
+        if analysis.anomalies:
+            doc.add_heading('Risk & Anomaly Analysis', level=1)
+            
+            for i, anomaly in enumerate(analysis.anomalies, 1):
+                # Anomaly heading
+                doc.add_heading(f'Anomaly {i}: {anomaly.metric}', level=2)
+                
+                # Current value
+                doc.add_paragraph(f"Current Value: {anomaly.current_value}")
+                
+                # Previous value if available
+                if anomaly.comparison_value and anomaly.comparison_value != "N/A":
+                    doc.add_paragraph(f"Previous Value: {anomaly.comparison_value}")
+                
+                # Change if available  
+                if anomaly.change_percent and anomaly.change_percent != "N/A":
+                    doc.add_paragraph(f"Change: {anomaly.change_percent}")
+                
+                # Risk and analysis
+                doc.add_paragraph(f"Risk Level: {anomaly.risk_level}")
+                doc.add_paragraph(f"Business Analysis: {anomaly.explanation}")
+                doc.add_paragraph(f"Recommended Actions: {anomaly.next_steps}")
+                doc.add_paragraph(f"Statistical Confidence: Z-score = {anomaly.z_score:.2f}")
+        
+        # Audit Information
+        doc.add_heading('Analysis Metadata', level=1)
+        doc.add_paragraph(f"Generated: {analysis.analysis_timestamp}")
+        doc.add_paragraph(f"Total Anomalies Detected: {analysis.total_anomalies_found}")
+        
+        if analysis.executive_summary.data_sources:
+            doc.add_paragraph(f"Data Sources: {', '.join(analysis.executive_summary.data_sources)}")
+        
+        # Convert to bytes for download
+        doc_buffer = io.BytesIO()
+        doc.save(doc_buffer)
+        doc_buffer.seek(0)
+        
+        return doc_buffer.getvalue()
+        
+    except Exception as e:
+        # Return a simple text document if Word generation fails
+        simple_report = f"""FINANCIAL ANALYSIS REPORT
+Generated: {analysis.analysis_timestamp}
+
+EXECUTIVE SUMMARY:
+{analysis.executive_summary.narrative}
+
+ANOMALIES DETECTED: {analysis.total_anomalies_found}
+"""
+        
+        if analysis.anomalies:
+            for i, anomaly in enumerate(analysis.anomalies, 1):
+                simple_report += f"""
+ANOMALY {i}: {anomaly.metric}
+- Current Value: {anomaly.current_value}
+- Risk Level: {anomaly.risk_level}  
+- Analysis: {anomaly.explanation}
+- Next Steps: {anomaly.next_steps}
+- Z-Score: {anomaly.z_score:.2f}
+"""
+        
+        return simple_report.encode('utf-8')
 
 # Main Streamlit App
 def main():
@@ -430,38 +468,39 @@ def main():
                             }
                         }
                         
-                        # Enhanced prompt requiring specific quantified analysis
-                        prompt = f"""Analyze quarterly financial data with specific numerical precision.
+                        # Calculate specific variances for the prompt
+                        current_quarter = df_with_changes.iloc[-1]
+                        previous_quarter = df_with_changes.iloc[-2] if len(df_with_changes) > 1 else current_quarter
+                        
+                        # Pre-calculate key variances to inject into prompt
+                        revenue_change = current_quarter.get('Total_Revenue_M', 0) - previous_quarter.get('Total_Revenue_M', 0)
+                        revenue_pct = (revenue_change / previous_quarter.get('Total_Revenue_M', 1)) * 100 if previous_quarter.get('Total_Revenue_M', 0) != 0 else 0
+                        
+                        opex_change = current_quarter.get('Operating_Expenses_M', 0) - previous_quarter.get('Operating_Expenses_M', 0)
+                        opex_pct = (opex_change / previous_quarter.get('Operating_Expenses_M', 1)) * 100 if previous_quarter.get('Operating_Expenses_M', 0) != 0 else 0
+                        
+                        # Enhanced prompt requiring specific calculations
+                        prompt = f"""Analyze this quarterly financial data with MANDATORY specific calculations.
 
-REQUIRED: All statements must include exact numbers and calculations.
+YOU MUST INCLUDE THESE EXACT CALCULATIONS IN YOUR NARRATIVE:
 
-CORRECT SPECIFIC FORMAT: 
-"Total revenue declined $3.2M (-6.1%) from $52.3M to $49.1M, driven by APAC's $2.6M drop (-16.5%)"
-"Operating expenses surged $16.3M (+41.9%) from $38.9M to $55.2M"
+Revenue Analysis:
+- Total Revenue: ${current_quarter.get('Total_Revenue_M', 0):.1f}M (vs ${previous_quarter.get('Total_Revenue_M', 0):.1f}M = {revenue_change:+.1f}M or {revenue_pct:+.1f}%)
+- APAC: ${current_quarter.get('APAC_Revenue_M', 0):.1f}M (vs ${previous_quarter.get('APAC_Revenue_M', 0):.1f}M)
+- Americas: ${current_quarter.get('Americas_Revenue_M', 0):.1f}M (vs ${previous_quarter.get('Americas_Revenue_M', 0):.1f}M)  
+- EMEA: ${current_quarter.get('EMEA_Revenue_M', 0):.1f}M (vs ${previous_quarter.get('EMEA_Revenue_M', 0):.1f}M)
 
-WRONG VAGUE FORMAT:
-"Notable revenue declines across regional markets" 
-"Significant challenges in cost management"
-"Escalating operating expenses"
+Cost Analysis:
+- Operating Expenses: ${current_quarter.get('Operating_Expenses_M', 0):.1f}M (vs ${previous_quarter.get('Operating_Expenses_M', 0):.1f}M = {opex_change:+.1f}M or {opex_pct:+.1f}%)
 
-=== DATA TO ANALYZE ===
-Current Quarter: {json.dumps(data_summary['latest_quarter'], indent=2)}
+FORBIDDEN WORDS: "significant," "notable," "challenges," "escalating" - USE NUMBERS ONLY
+
+REQUIRED FORMAT: "Revenue declined $X.XM (-X.X%) from $Y.YM to $Z.ZM"
+
+Current Quarter Data: {json.dumps(data_summary['latest_quarter'], indent=2)}
 Statistical Anomalies: {json.dumps(anomalies, indent=2)}
 
-=== CALCULATION REQUIREMENTS ===
-For EVERY metric mentioned, you must:
-1. State current value and previous value with exact dollar amounts
-2. Calculate and state absolute change ($X.XM difference)
-3. Calculate and state percentage change (X.X% up/down)
-4. Identify which specific metric drove overall changes
-
-Example calculation format:
-- "Revenue: $49.1M (down $3.2M or -6.1% from Q4's $52.3M)"
-- "Operating expenses: $55.2M (up $16.3M or +41.9% from Q4's $38.9M)"
-
-NEVER use vague terms like "challenges," "notable," "significant" without specific numbers.
-
-Generate structured analysis using the financial_analysis tool."""
+Generate analysis using financial_analysis tool with mandatory numerical precision."""
 
                         response = client.messages.create(
                             model="claude-3-5-haiku-20241022",
