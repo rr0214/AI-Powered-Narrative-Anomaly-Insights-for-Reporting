@@ -711,17 +711,31 @@ Generate clean, readable analysis using financial_analysis tool."""
                     col1, col2, col3 = st.columns(3)
                     
                     with col1:
-                        if st.button("Download Word Report"):
-                            try:
-                                doc_bytes = export_to_word(analysis)
-                                st.download_button(
-                                    label="Download DOCX",
-                                    data=doc_bytes,
-                                    file_name="financial_analysis_report.docx",
-                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                                )
-                            except Exception as e:
-                                st.error(f"Error generating Word document: {str(e)}")
+                        try:
+                            doc_bytes = export_to_word(analysis)
+                            st.download_button(
+                                label="Download DOCX",
+                                data=doc_bytes,
+                                file_name="financial_analysis_report.docx",
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                            )
+                        except Exception as e:
+                            st.error(f"Word export error: {str(e)}")
+                            # Fallback text download
+                            simple_text = f"""FINANCIAL ANALYSIS REPORT
+                            
+Executive Summary:
+{analysis.executive_summary.narrative}
+
+Anomalies:
+{chr(10).join([f"{i+1}. {a.metric}: {a.explanation}" for i, a in enumerate(analysis.anomalies)])}
+"""
+                            st.download_button(
+                                label="Download Text Report",
+                                data=simple_text,
+                                file_name="financial_analysis_report.txt",
+                                mime="text/plain"
+                            )
                     
                     with col2:
                         try:
