@@ -255,9 +255,9 @@ def create_cell_reference_map(df: pd.DataFrame) -> Dict[str, str]:
                 excel_row = row_idx + 2  # +2 for header and 1-indexed
                 cell_ref = f"{col_letter}{excel_row}"
                 
-                # Map value to cell location
-                value_key = f"{value}"
-                cell_map[value_key] = f"{col_name} (cell {cell_ref})"
+                # Map value to cell location with multiple key formats
+                cell_map[f"{value}"] = f"{col_name} (cell {cell_ref})"
+                cell_map[f"{col_name}_{value}"] = f"cell {cell_ref}"
                 
                 # Also map formatted versions
                 if isinstance(value, (int, float)):
@@ -266,6 +266,30 @@ def create_cell_reference_map(df: pd.DataFrame) -> Dict[str, str]:
                     cell_map[f"${value:,.0f}M"] = f"{col_name} (cell {cell_ref})"
     
     return cell_map
+
+def safe_column_match(metric_name: str, df_columns: List[str]) -> str:
+    """Safely match anomaly metric names to actual DataFrame columns"""
+    
+    # Direct match first
+    if metric_name in df_columns:
+        return metric_name
+    
+    # Fuzzy matching for common variations
+    metric_clean = metric_name.lower().replace(' ', '_').replace('-', '_')
+    
+    for col in df_columns:
+        col_clean = col.lower().replace(' ', '_').replace('-', '_')
+        
+        # Exact match after cleaning
+        if metric_clean == col_clean:
+            return col
+            
+        # Partial match (e.g., "Operating_Expenses" matches "Operating_Expenses_M")
+        if metric_clean in col_clean or col_clean in metric_clean:
+            return col
+    
+    # If no match found, return the original name with warning
+    return metric_name
 
 def generate_audit_trail_report(analysis: FinancialAnalysis, df: pd.DataFrame, anomalies: List[Dict]) -> str:
     """Generate comprehensive audit trail with cell-level provenance"""
@@ -307,12 +331,20 @@ Data Source Validation:
         report += f"ANOMALY #{i}: {anomaly_obj.metric}\n"
         report += f"{'-'*40}\n"
         
-        # Find the exact cell for this anomaly
-        col_letter = chr(65 + list(df.columns).index(anomaly_obj.metric.replace(' ', '_').replace('_M', '')))
-        row_number = raw_anomaly['index'] + 2  # Convert to Excel row (1-indexed + header)
-        cell_ref = f"{col_letter}{row_number}"
+        # Safe column matching to handle name variations
+        matched_col = safe_column_match(raw_anomaly['metric'], df.columns.tolist())
         
-        report += f"Source Cell: {cell_ref}\n"
+        if matched_col in df.columns:
+            col_idx = list(df.columns).index(matched_col)
+            col_letter = chr(65 + col_idx)  # Convert to A, B, C, etc.
+            row_number = raw_anomaly['index'] + 2  # Excel 1-indexed + header
+            cell_ref = f"{col_letter}{row_number}"
+            
+            report += f"Source Cell: {cell_ref}\n"
+            report += f"Column: {matched_col}\n"
+        else:
+            report += f"Source Cell: Unable to match column '{raw_anomaly['metric']}'\n"
+            
         report += f"Raw Value: {raw_anomaly['value']}\n" 
         report += f"Statistical Analysis:\n"
         report += f"  - Mean: {raw_anomaly['mean']:.2f}\n"
@@ -397,9 +429,57 @@ def main():
     conn = init_database()
     client = get_anthropic_client()
     
-    # Sidebar configuration
-    st.sidebar.header("Configuration")
-    z_score_threshold = st.sidebar.slider("Anomaly Detection Threshold (Z-Score)", 1.5, 3.0, 2.0, 0.1)
+    # Sidebar configuration with business-friendly controls
+    st.sidebar.header("Detection Settings")
+    
+    # Business-friendly threshold selection
+    sensitivity_level = st.sidebar.select_slider(
+        "Anomaly Detection Sensitivity",
+        options=["Conservative", "Moderate", "Sensitive"],
+        value="Moderate",
+        help="Conservative: Only flag extreme outliers | Moderate: Standard business thresholds | Sensitive: Flag smaller deviations"
+    )
+    
+    # Map business terms to statistical values
+    threshold_mapping = {
+        "Conservative": 3.0,   # ~99.7% confidence - only extreme outliers
+        "Moderate": 2.0,       # ~95% confidence - standard business practice
+        "Sensitive": 1.5       # ~87% confidence - catch smaller issues
+    }
+    
+    z_score_threshold = threshold_mapping[sensitivity_level]
+    
+    # Show real-time impact
+    with st.sidebar.expander("What This Means"):
+        if sensitivity_level == "Conservative":
+            st.write("🎯 **Ultra-high confidence alerts**")
+            st.write("• Flags ~0.3% of typical data points")
+            st.write("• Use for: Critical SEC filings, executive dashboards")
+            st.write("• Risk: May miss subtle but important issues")
+        elif sensitivity_level == "Moderate": 
+            st.write("📊 **Standard business threshold**")
+            st.write("• Flags ~5% of typical data points")
+            st.write("• Use for: Quarterly reviews, standard reporting")
+            st.write("• Balance of accuracy and coverage")
+        else:  # Sensitive
+            st.write("🔍 **Early warning system**")
+            st.write("• Flags ~13% of typical data points") 
+            st.write("• Use for: Monthly monitoring, trend analysis")
+            st.write("• Risk: More false positives requiring review")
+    
+    # Show live preview of threshold impact
+    if uploaded_file is not None:
+        with st.sidebar.expander("Live Impact Preview"):
+            test_anomalies = detect_anomalies(df_with_changes, threshold=z_score_threshold)
+            st.metric("Anomalies at Current Setting", len(test_anomalies))
+            
+            # Compare with other thresholds
+            conservative_count = len(detect_anomalies(df_with_changes, threshold=3.0))
+            sensitive_count = len(detect_anomalies(df_with_changes, threshold=1.5))
+            
+            st.write(f"Conservative (3.0): {conservative_count} anomalies")
+            st.write(f"Moderate (2.0): {len(test_anomalies)} anomalies") 
+            st.write(f"Sensitive (1.5): {sensitive_count} anomalies")
     
     # File upload
     st.header("📁 Upload Financial Data")
@@ -518,7 +598,8 @@ Use the financial_analysis tool with exact schema compliance."""
 
                         response = client.messages.create(
                             model="claude-3-5-haiku-20241022",
-                            max_tokens=2000,
+                            max_tokens=1500,  # Reduced for cost control
+                            temperature=0.1,  # Low temperature for determinism
                             tools=[analysis_tool],
                             messages=[{"role": "user", "content": prompt}]
                         )
