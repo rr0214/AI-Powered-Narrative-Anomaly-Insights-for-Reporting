@@ -456,42 +456,65 @@ Generate structured analysis using the financial_analysis tool."""
 
                         response = client.messages.create(
                             model="claude-3-5-haiku-20241022",
-                            max_tokens=1500,  # Reduced for cost control
-                            temperature=0.1,  # Low temperature for determinism
+                            max_tokens=1500,
+                            temperature=0.1,
                             tools=[analysis_tool],
                             messages=[{"role": "user", "content": prompt}]
                         )
+                        
+                        # Debug: Show what Claude actually returned
+                        st.write("**Debug - Claude Response:**")
+                        st.json(response.model_dump())
                         
                         # Parse response with enhanced error handling
                         tool_result = None
                         for content in response.content:
                             if content.type == "tool_use":
                                 tool_result = content.input
+                                st.write("**Tool Input Found:**")
+                                st.json(tool_result)
                                 break
                         
-                        if tool_result:
-                            # Add timestamp and ensure required fields exist
-                            tool_result["analysis_timestamp"] = datetime.now().isoformat()
+                        if not tool_result:
+                            st.error("Claude did not return structured data. Check the debug info above.")
+                            st.stop()
+                        
+                        # Add required fields with defaults if missing
+                        if "executive_summary" not in tool_result:
+                            tool_result["executive_summary"] = {
+                                "narrative": "Analysis complete - review anomalies below",
+                                "key_metrics": [col for col in df.columns if df[col].dtype in ['int64', 'float64']][:3],
+                                "data_sources": df.columns.tolist()[:3]
+                            }
+                        
+                        if "anomalies" not in tool_result:
+                            tool_result["anomalies"] = []
+                        
+                        if "total_anomalies_found" not in tool_result:
+                            tool_result["total_anomalies_found"] = len(anomalies)
                             
-                            # Validate and clean anomalies with automatic truncation
-                            if "anomalies" in tool_result:
-                                cleaned_anomalies = []
-                                for anomaly in tool_result["anomalies"]:
-                                    # Ensure all required fields exist with defaults and truncation
-                                    cleaned_anomaly = {
-                                        "metric": anomaly.get("metric", "Unknown"),
-                                        "current_value": anomaly.get("current_value", "N/A"),
-                                        "comparison_value": anomaly.get("comparison_value", "N/A"),
-                                        "change_percent": anomaly.get("change_percent", "N/A"),
-                                        "risk_level": anomaly.get("risk_level", "Medium"),
-                                        "explanation": anomaly.get("explanation", "Statistical anomaly detected")[:200],  # Truncate to 200 chars
-                                        "next_steps": anomaly.get("next_steps", "Review data for accuracy")[:150],  # Truncate to 150 chars
-                                        "z_score": float(anomaly.get("z_score", 2.0))
-                                    }
-                                    cleaned_anomalies.append(cleaned_anomaly)
-                                tool_result["anomalies"] = cleaned_anomalies
-                            
-                            analysis = FinancialAnalysis(**tool_result)
+                        tool_result["analysis_timestamp"] = datetime.now().isoformat()
+                        
+                        # Validate and clean anomalies with automatic truncation
+                        cleaned_anomalies = []
+                        for anomaly in tool_result["anomalies"]:
+                            cleaned_anomaly = {
+                                "metric": anomaly.get("metric", "Unknown"),
+                                "current_value": anomaly.get("current_value", "N/A"),
+                                "comparison_value": anomaly.get("comparison_value", "N/A"),
+                                "change_percent": anomaly.get("change_percent", "N/A"),
+                                "risk_level": anomaly.get("risk_level", "Medium"),
+                                "explanation": str(anomaly.get("explanation", "Statistical anomaly detected"))[:200],
+                                "next_steps": str(anomaly.get("next_steps", "Review data for accuracy"))[:150],
+                                "z_score": float(anomaly.get("z_score", 2.0))
+                            }
+                            cleaned_anomalies.append(cleaned_anomaly)
+                        tool_result["anomalies"] = cleaned_anomalies
+                        
+                        st.write("**Final Processed Data:**")
+                        st.json(tool_result)
+                        
+                        analysis = FinancialAnalysis(**tool_result)
                     
                     except Exception as e:
                         st.error(f"Error generating analysis: {str(e)}")
