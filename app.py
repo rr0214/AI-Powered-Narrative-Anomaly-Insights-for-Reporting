@@ -114,6 +114,43 @@ def detect_anomalies(df: pd.DataFrame, threshold: float = 2.0) -> List[Dict[str,
     
     return anomalies
 
+# Anomaly detection functions
+def detect_anomalies(df: pd.DataFrame, threshold: float = 2.0) -> List[Dict[str, Any]]:
+    """Detect statistical anomalies using z-score method"""
+    anomalies = []
+    
+    # Get numeric columns only
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    
+    for col in numeric_cols:
+        if len(df[col].dropna()) < 2:  # Skip if insufficient data
+            continue
+            
+        # Calculate z-scores
+        mean_val = df[col].mean()
+        std_val = df[col].std()
+        
+        if std_val == 0:  # Skip if no variation
+            continue
+            
+        z_scores = np.abs((df[col] - mean_val) / std_val)
+        
+        # Find outliers
+        outlier_indices = z_scores >= threshold
+        
+        if outlier_indices.any():
+            for idx in df[outlier_indices].index:
+                anomalies.append({
+                    'metric': col,
+                    'index': idx,
+                    'value': df.loc[idx, col],
+                    'z_score': z_scores.loc[idx],
+                    'mean': mean_val,
+                    'std': std_val
+                })
+    
+    return anomalies
+
 def calculate_qoq_changes(df: pd.DataFrame) -> pd.DataFrame:
     """Calculate quarter-over-quarter changes"""
     if 'Quarter' not in df.columns:
