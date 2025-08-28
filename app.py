@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any
 import io
+import re
 
 # Import required libraries
 try:
@@ -77,9 +78,73 @@ def init_database():
     conn.commit()
     return conn
 
+# Text cleanup function
+def clean_data_for_json(data: Dict) -> Dict:
+    """Clean DataFrame data for safe JSON serialization"""
+    cleaned = {}
+    for key, value in data.items():
+        try:
+            # Handle different data types safely
+            if pd.isna(value):
+                cleaned[key] = None
+            elif isinstance(value, str):
+                cleaned[key] = value  # Keep strings as-is
+            elif isinstance(value, (int, np.integer)):
+                cleaned[key] = int(value)
+            elif isinstance(value, (float, np.floating)):
+                if np.isinf(value):
+                    cleaned[key] = None
+                else:
+                    cleaned[key] = float(value)
+            else:
+                # Convert other types to string
+                cleaned[key] = str(value)
+        except Exception:
+            # If anything fails, convert to string
+            cleaned[key] = str(value) if value is not None else None
+    
+    return cleaned
+    """Clean formatting issues in AI-generated text"""
+    if not text:
+        return text
+    
+    # Remove all markdown formatting
+    text = re.sub(r'\*+', '', text)  # Remove all asterisks
+    text = re.sub(r'_+', '', text)   # Remove underscores
+    text = re.sub(r'#+', '', text)   # Remove hashtags
+    
+    # Fix number formatting issues
+    text = re.sub(r'(\d+\.?\d*)M\(', r'\1M (', text)  # Add space before parentheses
+    text = re.sub(r'(\d+\.?\d*)\(', r'\1 (', text)    # Space before any parentheses
+    text = re.sub(r'\)(\w)', r') \1', text)           # Space after closing parentheses
+    text = re.sub(r'(\d)([A-Z])', r'\1 \2', text)     # Space between numbers and letters
+    text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)  # Space between camelCase
+    
+    # Fix sentence structure
+    text = re.sub(r'\.([A-Z])', r'. \1', text)        # Space after periods
+    text = re.sub(r',([A-Z])', r', \1', text)         # Space after commas
+    text = re.sub(r':([A-Z])', r': \1', text)         # Space after colons
+    
+    # Fix specific formatting patterns
+    text = re.sub(r'M\.([A-Z])', r'M. \1', text)      # Space after currency and period
+    text = re.sub(r'%)\.', r'%). ', text)             # Space after percentage and period
+    
+    # Remove duplicate spaces
+    text = re.sub(r'\s+', ' ', text)
+    
+    # Fix punctuation spacing
+    text = re.sub(r' \.', '.', text)  # Remove space before period
+    text = re.sub(r' ,', ',', text)   # Remove space before comma
+    
+    # Ensure sentences end properly
+    if text and not text.endswith('.'):
+        text += '.'
+    
+    return text.strip()
+
 # Anomaly detection functions
-def detect_anomalies(df: pd.DataFrame, threshold: float = 2.0) -> Dict[str, Any]:
-    """Detect statistical anomalies using z-score and IQR methods"""
+def detect_anomalies(df: pd.DataFrame, threshold: float = 2.0) -> List[Dict[str, Any]]:
+    """Detect statistical anomalies using z-score method"""
     anomalies = []
     
     # Get numeric columns only
@@ -127,169 +192,6 @@ def calculate_qoq_changes(df: pd.DataFrame) -> pd.DataFrame:
         df_sorted[f'{col}_QoQ_Abs_Change'] = df_sorted[col].diff()
     
     return df_sorted
-
-# LLM Analysis
-async def analyze_with_claude(df: pd.DataFrame, anomalies: List[Dict], client: Anthropic) -> FinancialAnalysis:
-    """Generate analysis using Claude Haiku with function calling"""
-    
-    # Prepare data summary
-    data_summary = {
-        'columns': df.columns.tolist(),
-        'shape': df.shape,
-        'numeric_summary': df.describe().to_dict(),
-        'latest_quarter': df.iloc[-1].to_dict() if len(df) > 0 else {},
-        'anomalies_detected': len(anomalies)
-    }
-    
-    # Create the analysis tool
-    analysis_tool = {
-        "name": "financial_analysis",
-        "description": "Analyze quarterly financial data and generate executive summary with anomaly explanations",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "executive_summary": {
-                    "type": "object",
-                    "properties": {
-                        "narrative": {"type": "string", "description": "3-5 sentence executive summary"},
-                        "key_metrics": {"type": "array", "items": {"type": "string"}},
-                        "data_sources": {"type": "array", "items": {"type": "string"}}
-                    },
-                    "required": ["narrative", "key_metrics", "data_sources"]
-                },
-                "anomalies": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "metric": {"type": "string"},
-                            "current_value": {"type": "string"},
-                            "comparison_value": {"type": "string"},
-                            "change_percent": {"type": "string"},
-                            "risk_level": {"type": "string", "enum": ["High", "Medium", "Low"]},
-                            "explanation": {"type": "string", "maxLength": 80},
-                            "next_steps": {"type": "string"},
-                            "z_score": {"type": "number"}
-                        },
-                                                                "required": ["metric", "current_value", "risk_level", "explanation", "next_steps", "z_score"]
-                    }
-                },
-                "total_anomalies_found": {"type": "integer"},
-                "analysis_timestamp": {"type": "string"}
-            },
-            "required": ["executive_summary", "anomalies", "total_anomalies_found", "analysis_timestamp"]
-        }
-    }
-    
-    # Construct prompt
-    prompt = f"""You are analyzing quarterly financial data for executive reporting.
-
-Dataset Overview:
-- Columns: {data_summary['columns']}
-- Shape: {data_summary['shape']} (rows, columns)
-- Latest Quarter Data: {json.dumps(data_summary['latest_quarter'], indent=2)}
-
-Statistical Anomalies Detected: {len(anomalies)}
-{json.dumps(anomalies, indent=2) if anomalies else "None"}
-
-Instructions:
-1. Generate a 3-5 sentence executive summary highlighting key trends
-2. For each anomaly, provide business context and next steps  
-3. Use ONLY the numbers provided - no estimates or assumptions
-4. Focus on actionable insights for compliance managers
-5. Keep explanations under 80 words each
-
-Use the financial_analysis tool to structure your response."""
-
-    try:
-        response = client.messages.create(
-            model="claude-3-5-haiku-20241022",
-            max_tokens=2000,
-            tools=[analysis_tool],
-            messages=[{"role": "user", "content": prompt}]
-        )
-        
-        # Extract tool use result
-        tool_result = None
-        for content in response.content:
-            if content.type == "tool_use":
-                tool_result = content.input
-                break
-        
-        if not tool_result:
-            st.error("Claude did not use the analysis tool properly")
-            return None
-            
-        # Convert to Pydantic model for validation
-        return FinancialAnalysis(**tool_result)
-        
-    except Exception as e:
-        st.error(f"Error calling Claude API: {str(e)}")
-        return None
-
-def create_provenance_mapping(df: pd.DataFrame, anomalies: List[Dict]) -> Dict[str, str]:
-    """Create mapping of values to their exact cell locations"""
-    provenance = {}
-    
-    # Map each value to its cell location
-    for row_idx, row in df.iterrows():
-        for col_name, value in row.items():
-            if pd.notna(value) and isinstance(value, (int, float)):
-                # Create Excel-style cell reference
-                col_letter = chr(65 + list(df.columns).index(col_name))  # A, B, C, etc.
-                cell_ref = f"{col_letter}{row_idx + 2}"  # +2 because Excel starts at 1 and has header
-                provenance[f"{value}"] = f"{col_name} (cell {cell_ref})"
-                provenance[f"{col_name}_{value}"] = f"cell {cell_ref}"
-    
-    return provenance
-
-def create_cell_reference_map(df: pd.DataFrame) -> Dict[str, str]:
-    """Create mapping of every value to Excel-style cell reference"""
-    cell_map = {}
-    
-    for row_idx, row in df.iterrows():
-        for col_idx, (col_name, value) in enumerate(row.items()):
-            if pd.notna(value):
-                # Excel-style cell reference (A1, B2, etc.)
-                col_letter = chr(65 + col_idx)  # A, B, C...
-                excel_row = row_idx + 2  # +2 for header and 1-indexed
-                cell_ref = f"{col_letter}{excel_row}"
-                
-                # Map value to cell location with multiple key formats
-                cell_map[f"{value}"] = f"{col_name} (cell {cell_ref})"
-                cell_map[f"{col_name}_{value}"] = f"cell {cell_ref}"
-                
-                # Also map formatted versions
-                if isinstance(value, (int, float)):
-                    cell_map[f"{value:,.0f}"] = f"{col_name} (cell {cell_ref})"
-                    cell_map[f"{value:,.1f}"] = f"{col_name} (cell {cell_ref})"
-                    cell_map[f"${value:,.0f}M"] = f"{col_name} (cell {cell_ref})"
-    
-    return cell_map
-
-def safe_column_match(metric_name: str, df_columns: List[str]) -> str:
-    """Safely match anomaly metric names to actual DataFrame columns"""
-    
-    # Direct match first
-    if metric_name in df_columns:
-        return metric_name
-    
-    # Fuzzy matching for common variations
-    metric_clean = metric_name.lower().replace(' ', '_').replace('-', '_')
-    
-    for col in df_columns:
-        col_clean = col.lower().replace(' ', '_').replace('-', '_')
-        
-        # Exact match after cleaning
-        if metric_clean == col_clean:
-            return col
-            
-        # Partial match (e.g., "Operating_Expenses" matches "Operating_Expenses_M")
-        if metric_clean in col_clean or col_clean in metric_clean:
-            return col
-    
-    # If no match found, return the original name with warning
-    return metric_name
 
 def generate_audit_trail_report(analysis: FinancialAnalysis, df: pd.DataFrame, anomalies: List[Dict]) -> str:
     """Generate comprehensive audit trail with cell-level provenance"""
@@ -364,52 +266,91 @@ Key Metrics Referenced:
     report += f"Data Integrity: All numbers traced to source\n"
     
     return report
-def export_to_word(analysis: FinancialAnalysis, filename: str = "financial_analysis.docx"):
-    """Export analysis to Word document"""
-    doc = Document()
-    
-    # Title
-    title = doc.add_heading('Quarterly Financial Analysis', 0)
-    
-    # Executive Summary
-    doc.add_heading('Executive Summary', level=1)
-    doc.add_paragraph(analysis.executive_summary.narrative)
-    
-    # Key Metrics
-    doc.add_heading('Key Metrics', level=2)
-    for metric in analysis.executive_summary.key_metrics:
-        doc.add_paragraph(f"• {metric}", style='List Bullet')
-    
-    # Anomalies Section
-    if analysis.anomalies:
-        doc.add_heading('Risk & Anomaly Analysis', level=1)
-        
-        for i, anomaly in enumerate(analysis.anomalies, 1):
-            doc.add_heading(f'Anomaly {i}: {anomaly.metric}', level=2)
-            doc.add_paragraph(f"Current Value: {anomaly.current_value}")
-            if anomaly.comparison_value:
-                doc.add_paragraph(f"Previous Value: {anomaly.comparison_value}")
-            if anomaly.change_percent:
-                doc.add_paragraph(f"Change: {anomaly.change_percent}")
-            doc.add_paragraph(f"Risk Level: {anomaly.risk_level}")
-            doc.add_paragraph(f"Analysis: {anomaly.explanation}")
-            doc.add_paragraph(f"Recommended Actions: {anomaly.next_steps}")
-            doc.add_paragraph(f"Statistical Confidence: z-score = {anomaly.z_score:.2f}")
-    
-    # Audit Information
-    doc.add_heading('Audit Trail', level=1)
-    doc.add_paragraph(f"Analysis Generated: {analysis.analysis_timestamp}")
-    doc.add_paragraph(f"Total Anomalies Detected: {analysis.total_anomalies_found}")
-    doc.add_paragraph("Data Sources: " + ", ".join(analysis.executive_summary.data_sources))
-    
-    # Save to bytes
-    doc_bytes = io.BytesIO()
-    doc.save(doc_bytes)
-    doc_bytes.seek(0)
-    
-    return doc_bytes.getvalue()
 
-# Streamlit App
+def export_to_word(analysis: FinancialAnalysis) -> bytes:
+    """Export analysis to Word document with error handling"""
+    try:
+        doc = Document()
+        
+        # Title
+        doc.add_heading('Quarterly Financial Analysis Report', 0)
+        
+        # Executive Summary
+        doc.add_heading('Executive Summary', level=1)
+        doc.add_paragraph(analysis.executive_summary.narrative)
+        
+        # Key Metrics Section
+        if analysis.executive_summary.key_metrics:
+            doc.add_heading('Key Metrics Analyzed', level=2)
+            for metric in analysis.executive_summary.key_metrics:
+                p = doc.add_paragraph()
+                p.add_run(f"• {metric}")
+        
+        # Anomalies Section
+        if analysis.anomalies:
+            doc.add_heading('Risk & Anomaly Analysis', level=1)
+            
+            for i, anomaly in enumerate(analysis.anomalies, 1):
+                # Anomaly heading
+                doc.add_heading(f'Anomaly {i}: {anomaly.metric}', level=2)
+                
+                # Current value
+                doc.add_paragraph(f"Current Value: {anomaly.current_value}")
+                
+                # Previous value if available
+                if anomaly.comparison_value and anomaly.comparison_value != "N/A":
+                    doc.add_paragraph(f"Previous Value: {anomaly.comparison_value}")
+                
+                # Change if available  
+                if anomaly.change_percent and anomaly.change_percent != "N/A":
+                    doc.add_paragraph(f"Change: {anomaly.change_percent}")
+                
+                # Risk and analysis
+                doc.add_paragraph(f"Risk Level: {anomaly.risk_level}")
+                doc.add_paragraph(f"Business Analysis: {anomaly.explanation}")
+                doc.add_paragraph(f"Recommended Actions: {anomaly.next_steps}")
+                doc.add_paragraph(f"Statistical Confidence: Z-score = {anomaly.z_score:.2f}")
+        
+        # Audit Information
+        doc.add_heading('Analysis Metadata', level=1)
+        doc.add_paragraph(f"Generated: {analysis.analysis_timestamp}")
+        doc.add_paragraph(f"Total Anomalies Detected: {analysis.total_anomalies_found}")
+        
+        if analysis.executive_summary.data_sources:
+            doc.add_paragraph(f"Data Sources: {', '.join(analysis.executive_summary.data_sources)}")
+        
+        # Convert to bytes for download
+        doc_buffer = io.BytesIO()
+        doc.save(doc_buffer)
+        doc_buffer.seek(0)
+        
+        return doc_buffer.getvalue()
+        
+    except Exception as e:
+        # Return a simple text document if Word generation fails
+        simple_report = f"""FINANCIAL ANALYSIS REPORT
+Generated: {analysis.analysis_timestamp}
+
+EXECUTIVE SUMMARY:
+{analysis.executive_summary.narrative}
+
+ANOMALIES DETECTED: {analysis.total_anomalies_found}
+"""
+        
+        if analysis.anomalies:
+            for i, anomaly in enumerate(analysis.anomalies, 1):
+                simple_report += f"""
+ANOMALY {i}: {anomaly.metric}
+- Current Value: {anomaly.current_value}
+- Risk Level: {anomaly.risk_level}  
+- Analysis: {anomaly.explanation}
+- Next Steps: {anomaly.next_steps}
+- Z-Score: {anomaly.z_score:.2f}
+"""
+        
+        return simple_report.encode('utf-8')
+
+# Main Streamlit App
 def main():
     st.set_page_config(
         page_title="AI Anomaly Detection and Summarization for Reporting",
@@ -417,14 +358,22 @@ def main():
         layout="wide"
     )
     
-    st.title("🚀 AI Anomaly Detection and Summarization for Reporting")
+    st.title("AI Anomaly Detection and Summarization for Reporting")
     st.markdown("*Automatically generate executive summaries and detect statistical anomalies from financial data*")
     
-    # Initialize database
+    # Initialize database and client
     conn = init_database()
     client = get_anthropic_client()
     
-    # Sidebar configuration with business-friendly controls
+    # File upload - define this first
+    st.header("Upload Financial Data")
+    uploaded_file = st.file_uploader(
+        "Choose a CSV or Excel file", 
+        type=['csv', 'xlsx'],
+        help="Upload quarterly financial data for analysis"
+    )
+    
+    # Sidebar configuration - after file upload is defined
     st.sidebar.header("Detection Settings")
     
     # Business-friendly threshold selection
@@ -447,43 +396,22 @@ def main():
     # Show real-time impact
     with st.sidebar.expander("What This Means"):
         if sensitivity_level == "Conservative":
-            st.write("🎯 **Ultra-high confidence alerts**")
+            st.write("Ultra-high confidence alerts")
             st.write("• Flags ~0.3% of typical data points")
             st.write("• Use for: Critical SEC filings, executive dashboards")
             st.write("• Risk: May miss subtle but important issues")
         elif sensitivity_level == "Moderate": 
-            st.write("📊 **Standard business threshold**")
+            st.write("Standard business threshold")
             st.write("• Flags ~5% of typical data points")
             st.write("• Use for: Quarterly reviews, standard reporting")
             st.write("• Balance of accuracy and coverage")
         else:  # Sensitive
-            st.write("🔍 **Early warning system**")
+            st.write("Early warning system")
             st.write("• Flags ~13% of typical data points") 
             st.write("• Use for: Monthly monitoring, trend analysis")
             st.write("• Risk: More false positives requiring review")
     
-    # Show live preview of threshold impact
-    if uploaded_file is not None:
-        with st.sidebar.expander("Live Impact Preview"):
-            test_anomalies = detect_anomalies(df_with_changes, threshold=z_score_threshold)
-            st.metric("Anomalies at Current Setting", len(test_anomalies))
-            
-            # Compare with other thresholds
-            conservative_count = len(detect_anomalies(df_with_changes, threshold=3.0))
-            sensitive_count = len(detect_anomalies(df_with_changes, threshold=1.5))
-            
-            st.write(f"Conservative (3.0): {conservative_count} anomalies")
-            st.write(f"Moderate (2.0): {len(test_anomalies)} anomalies") 
-            st.write(f"Sensitive (1.5): {sensitive_count} anomalies")
-    
-    # File upload
-    st.header("📁 Upload Financial Data")
-    uploaded_file = st.file_uploader(
-        "Choose a CSV or Excel file", 
-        type=['csv', 'xlsx'],
-        help="Upload quarterly financial data for analysis"
-    )
-    
+    # Process uploaded file
     if uploaded_file is not None:
         try:
             # Read file
@@ -492,20 +420,56 @@ def main():
             else:
                 df = pd.read_excel(uploaded_file)
             
-            st.success(f"✅ File uploaded: {uploaded_file.name} ({df.shape[0]} rows, {df.shape[1]} columns)")
+            st.success(f"File uploaded: {uploaded_file.name} ({df.shape[0]} rows, {df.shape[1]} columns)")
+            
+            # Show live impact preview in sidebar now that we have data
+            with st.sidebar.expander("Live Impact Preview"):
+                try:
+                    # Calculate anomalies for each threshold
+                    conservative_anomalies = detect_anomalies(df, threshold=3.0)
+                    moderate_anomalies = detect_anomalies(df, threshold=2.0)
+                    sensitive_anomalies = detect_anomalies(df, threshold=1.5)
+                    current_anomalies = detect_anomalies(df, threshold=z_score_threshold)
+                    
+                    st.metric("Current Setting", len(current_anomalies))
+                    st.write(f"Conservative: {len(conservative_anomalies)} anomalies")
+                    st.write(f"Moderate: {len(moderate_anomalies)} anomalies")
+                    st.write(f"Sensitive: {len(sensitive_anomalies)} anomalies")
+                except Exception as e:
+                    st.write("Error calculating preview")
             
             # Display data preview
-            st.header("📊 Data Preview")
+            st.header("Data Preview")
             st.dataframe(df.head())
             
             # Calculate QoQ changes
             df_with_changes = calculate_qoq_changes(df)
             
-            # Detect anomalies
-            with st.spinner("🔍 Detecting anomalies..."):
+            # Detect anomalies with current threshold
+            with st.spinner("Detecting anomalies..."):
                 anomalies = detect_anomalies(df_with_changes, threshold=z_score_threshold)
             
-            st.header("⚠️ Anomalies Detected")
+            # Debug information to see what's happening
+            st.header("Debug Information")
+            with st.expander("Diagnostic Data"):
+                st.write(f"**Threshold setting:** {z_score_threshold}")
+                st.write(f"**Numeric columns found:** {df.select_dtypes(include=[np.number]).columns.tolist()}")
+                st.write(f"**Latest quarter data:**")
+                st.json(df_with_changes.iloc[-1].to_dict())
+                
+                # Manual anomaly calculation for Operating Expenses
+                if 'Operating_Expenses_M' in df.columns:
+                    opex_values = df['Operating_Expenses_M']
+                    opex_mean = opex_values.mean()
+                    opex_std = opex_values.std()
+                    latest_opex = opex_values.iloc[-1]
+                    opex_z = abs((latest_opex - opex_mean) / opex_std) if opex_std > 0 else 0
+                    st.write(f"**Operating Expenses Check:**")
+                    st.write(f"Latest value: ${latest_opex:.1f}M")
+                    st.write(f"Mean: ${opex_mean:.1f}M, Std: ${opex_std:.1f}M")
+                    st.write(f"Z-score: {opex_z:.2f} (should trigger if ≥{z_score_threshold})")
+            
+            st.header("Anomalies Detected")
             if anomalies:
                 st.warning(f"Found {len(anomalies)} statistical anomalies")
                 
@@ -514,27 +478,44 @@ def main():
                         st.write(f"**Value:** {anomaly['value']:,.2f}")
                         st.write(f"**Dataset Mean:** {anomaly['mean']:,.2f}")
                         st.write(f"**Standard Deviation:** {anomaly['std']:,.2f}")
+                        st.write(f"**Risk Level:** {'High' if anomaly['z_score'] > 3 else 'Medium'}")
             else:
-                st.info("No significant anomalies detected")
+                st.info("No significant anomalies detected with current threshold")
             
             # Generate AI analysis
-            if st.button("🤖 Generate AI Analysis", type="primary"):
-                with st.spinner("🧠 Analyzing with Claude Haiku..."):
-                    
-                    # Note: Using sync version for Streamlit compatibility
-                    # In a real async environment, you'd use the async version
-                    analysis = None
+            if st.button("Generate AI Analysis", type="primary"):
+                with st.spinner("Analyzing with Claude Haiku..."):
                     
                     try:
-                        # Prepare data for Claude
+                        # Calculate specific variances for the prompt
+                        current_quarter = df_with_changes.iloc[-1]
+                        previous_quarter = df_with_changes.iloc[-2] if len(df_with_changes) > 1 else current_quarter
+                        
+                        # Pre-calculate key variances to inject into prompt
+                        revenue_change = current_quarter.get('Total_Revenue_M', 0) - previous_quarter.get('Total_Revenue_M', 0)
+                        revenue_pct = (revenue_change / previous_quarter.get('Total_Revenue_M', 1)) * 100 if previous_quarter.get('Total_Revenue_M', 0) != 0 else 0
+                        
+                        opex_change = current_quarter.get('Operating_Expenses_M', 0) - previous_quarter.get('Operating_Expenses_M', 0)
+                        opex_pct = (opex_change / previous_quarter.get('Operating_Expenses_M', 1)) * 100 if previous_quarter.get('Operating_Expenses_M', 0) != 0 else 0
+                        
+                        # Prepare data for Claude with proper JSON cleaning
+                        current_quarter_clean = clean_data_for_json(current_quarter.to_dict())
+                        anomalies_clean = []
+                        
+                        for anomaly in anomalies:
+                            clean_anomaly = {
+                                'metric': anomaly['metric'],
+                                'value': float(anomaly['value']) if pd.notna(anomaly['value']) else 0,
+                                'z_score': float(anomaly['z_score']) if pd.notna(anomaly['z_score']) else 0,
+                                'index': int(anomaly['index'])
+                            }
+                            anomalies_clean.append(clean_anomaly)
+                        
                         data_summary = {
-                            'columns': df.columns.tolist(),
-                            'shape': df.shape,
-                            'numeric_summary': df_with_changes.describe().to_dict(),
-                            'latest_quarter': df_with_changes.iloc[-1].to_dict() if len(df_with_changes) > 0 else {},
+                            'latest_quarter': current_quarter_clean,
                         }
                         
-                        # Simplified synchronous version
+                        # Create analysis tool schema
                         analysis_tool = {
                             "name": "financial_analysis",
                             "description": "Analyze financial data and generate structured insights",
@@ -559,8 +540,8 @@ def main():
                                                 "comparison_value": {"type": "string"},
                                                 "change_percent": {"type": "string"},
                                                 "risk_level": {"type": "string"},
-                                                "explanation": {"type": "string"},
-                                                "next_steps": {"type": "string"},
+                                                "explanation": {"type": "string", "maxLength": 200},
+                                                "next_steps": {"type": "string", "maxLength": 150},
                                                 "z_score": {"type": "number"}
                                             }
                                         }
@@ -571,66 +552,111 @@ def main():
                             }
                         }
                         
-                        prompt = f"""Analyze quarterly financial data. Follow these patterns:
+                        # Enhanced prompt with explicit plain text requirements
+                        prompt = f"""Generate financial analysis in CLEAN PLAIN TEXT ONLY.
 
-CORRECT: "Revenue reached $45.2M" (uses exact provided number)
-WRONG: "Revenue grew 12%" (calculated percentage not provided)
+FORMATTING RULES - ABSOLUTELY CRITICAL:
+- Write normal sentences with proper spacing
+- Use standard keyboard characters only: a-z A-Z 0-9 . , ( ) $ % - space
+- NO asterisks, underscores, or special symbols
+- Put spaces after periods, commas, and parentheses
+- Write like a professional business email
 
-CORRECT: "Operating expenses at $35.8M exceeded normal range"  
-WRONG: "Due to new acquisitions and market expansion" (external context not provided)
+CONTENT REQUIREMENTS:
+Use these exact pre-calculated numbers:
+- Revenue change: {revenue_change:+.1f}M ({revenue_pct:+.1f}%)
+- OpEx change: {opex_change:+.1f}M ({opex_pct:+.1f}%)
+- Current revenue: ${current_quarter.get('Total_Revenue_M', 0):.1f}M
+- Previous revenue: ${previous_quarter.get('Total_Revenue_M', 0):.1f}M
 
-=== YOUR DATA ===
-Current Quarter: {json.dumps(data_summary['latest_quarter'], indent=2)}
-Statistical Anomalies: {json.dumps(anomalies, indent=2)}
+EXAMPLE CORRECT OUTPUT:
+"Revenue declined $3.2M (-6.1%) from $52.3M to $49.1M. Regional performance varied with APAC dropping $2.6M (-16.5%) while Americas remained stable. Operating expenses increased $16.3M (+41.9%) to $55.2M."
 
-Requirements:
-1. Executive summary: 3-5 sentences using ONLY provided numbers
-2. Each anomaly: explanation under 200 chars, next steps under 150 chars
-3. Risk levels: High/Medium/Low only
-4. NO calculations, percentages, or external context unless explicitly provided
+Your Data: {json.dumps(data_summary['latest_quarter'], indent=2)}
+Anomalies: {json.dumps(anomalies_clean, indent=2)}
 
-Use the financial_analysis tool with exact schema compliance."""
+Generate clean, readable analysis using financial_analysis tool."""
 
                         response = client.messages.create(
                             model="claude-3-5-haiku-20241022",
-                            max_tokens=1500,  # Reduced for cost control
-                            temperature=0.1,  # Low temperature for determinism
+                            max_tokens=1500,
+                            temperature=0.1,
                             tools=[analysis_tool],
                             messages=[{"role": "user", "content": prompt}]
                         )
                         
-                        # Parse response
+                        # Parse response with enhanced error handling
                         tool_result = None
                         for content in response.content:
                             if content.type == "tool_use":
                                 tool_result = content.input
                                 break
                         
-                        if tool_result:
-                            # Add timestamp
-                            tool_result["analysis_timestamp"] = datetime.now().isoformat()
-                            analysis = FinancialAnalysis(**tool_result)
+                        if not tool_result:
+                            st.error("Claude did not return structured data.")
+                            st.stop()
+                        
+                        # Add required fields with defaults if missing
+                        if "executive_summary" not in tool_result:
+                            tool_result["executive_summary"] = {
+                                "narrative": "Analysis complete - review anomalies below",
+                                "key_metrics": [col for col in df.columns if df[col].dtype in ['int64', 'float64']][:3],
+                                "data_sources": df.columns.tolist()[:3]
+                            }
+                        
+                        if "anomalies" not in tool_result:
+                            tool_result["anomalies"] = []
+                        
+                        if "total_anomalies_found" not in tool_result:
+                            tool_result["total_anomalies_found"] = len(anomalies)
+                            
+                        tool_result["analysis_timestamp"] = datetime.now().isoformat()
+                        
+                        # Validate and clean anomalies (temporarily without text cleaning)
+                        cleaned_anomalies = []
+                        for anomaly in tool_result["anomalies"]:
+                            cleaned_anomaly = {
+                                "metric": str(anomaly.get("metric", "Unknown")),
+                                "current_value": str(anomaly.get("current_value", "N/A")),
+                                "comparison_value": str(anomaly.get("comparison_value", "N/A")),
+                                "change_percent": str(anomaly.get("change_percent", "N/A")),
+                                "risk_level": anomaly.get("risk_level", "Medium"),
+                                "explanation": str(anomaly.get("explanation", "Statistical anomaly detected"))[:200],
+                                "next_steps": str(anomaly.get("next_steps", "Review data for accuracy"))[:150],
+                                "z_score": float(anomaly.get("z_score", 2.0))
+                            }
+                            cleaned_anomalies.append(cleaned_anomaly)
+                        tool_result["anomalies"] = cleaned_anomalies
+                        
+                        # Clean the executive summary (temporarily without text cleaning)
+                        if "executive_summary" in tool_result:
+                            narrative = tool_result["executive_summary"]["narrative"]
+                            # Simple cleaning - remove asterisks
+                            narrative = narrative.replace('*', '').replace('_', '')
+                            tool_result["executive_summary"]["narrative"] = narrative
+                        
+                        analysis = FinancialAnalysis(**tool_result)
                     
                     except Exception as e:
                         st.error(f"Error generating analysis: {str(e)}")
-                        st.info("Falling back to basic analysis...")
+                        st.info("Using fallback analysis...")
                         
-                        # Fallback analysis
+                        # Simple fallback that will definitely work
                         analysis = FinancialAnalysis(
                             executive_summary=ExecutiveSummary(
-                                narrative="Analysis completed successfully. Review the detected anomalies for potential risks.",
+                                narrative=f"Quarterly analysis complete for {uploaded_file.name}. {len(anomalies)} statistical anomalies detected requiring review.",
                                 key_metrics=[col for col in df.columns if df[col].dtype in ['int64', 'float64']][:5],
                                 data_sources=df.columns.tolist()[:5]
                             ),
                             anomalies=[
                                 Anomaly(
                                     metric=anomaly['metric'],
-                                    current_value=f"{anomaly['value']:,.2f}",
-                                    comparison_value="N/A",
-                                    change_percent="N/A", 
-                                    risk_level="Medium" if anomaly['z_score'] < 3 else "High",
-                                    explanation=f"Statistical outlier detected with z-score of {anomaly['z_score']:.2f}",
-                                    next_steps="Review data source and validate business context",
+                                    current_value=f"${anomaly['value']:,.0f}M" if anomaly['value'] > 1000 else f"{anomaly['value']:,.2f}",
+                                    comparison_value="Previous period",
+                                    change_percent="See analysis", 
+                                    risk_level="High" if anomaly['z_score'] > 3 else "Medium",
+                                    explanation=f"Statistical outlier with z-score of {anomaly['z_score']:.1f} standard deviations from normal range",
+                                    next_steps="Review data source and validate business context for this unusual value",
                                     z_score=anomaly['z_score']
                                 ) for anomaly in anomalies[:5]  # Limit to 5 anomalies
                             ],
@@ -638,9 +664,9 @@ Use the financial_analysis tool with exact schema compliance."""
                             analysis_timestamp=datetime.now().isoformat()
                         )
                 
-                if analysis:
+                if 'analysis' in locals() and analysis:
                     # Display results
-                    st.header("📝 AI-Generated Analysis")
+                    st.header("AI-Generated Analysis")
                     
                     # Executive Summary
                     st.subheader("Executive Summary")
@@ -653,7 +679,7 @@ Use the financial_analysis tool with exact schema compliance."""
                     
                     # Anomaly Analysis
                     if analysis.anomalies:
-                        st.subheader("🚨 Risk & Anomaly Analysis")
+                        st.subheader("Risk & Anomaly Analysis")
                         
                         for i, anomaly in enumerate(analysis.anomalies, 1):
                             with st.container():
@@ -680,56 +706,80 @@ Use the financial_analysis tool with exact schema compliance."""
                                 st.divider()
                     
                     # Export options
-                    st.header("📤 Export Analysis")
+                    st.header("Export Analysis")
                     
                     col1, col2, col3 = st.columns(3)
                     
                     with col1:
-                        if st.button("📄 Download Word Report"):
-                            doc_bytes = export_to_word(analysis)
-                            st.download_button(
-                                label="💾 Download DOCX",
-                                data=doc_bytes,
-                                file_name="financial_analysis_report.docx",
-                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                            )
+                        if st.button("Download Word Report"):
+                            try:
+                                doc_bytes = export_to_word(analysis)
+                                st.download_button(
+                                    label="Download DOCX",
+                                    data=doc_bytes,
+                                    file_name="financial_analysis_report.docx",
+                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                                )
+                            except Exception as e:
+                                st.error(f"Error generating Word document: {str(e)}")
                     
                     with col2:
-                        json_data = analysis.model_dump_json(indent=2)
-                        st.download_button(
-                            label="📊 Download JSON",
-                            data=json_data,
-                            file_name="financial_analysis.json",
-                            mime="application/json"
-                        )
+                        try:
+                            json_data = analysis.model_dump_json(indent=2)
+                            st.download_button(
+                                label="Download JSON",
+                                data=json_data,
+                                file_name="financial_analysis.json",
+                                mime="application/json"
+                            )
+                        except Exception as e:
+                            st.error(f"Error generating JSON: {str(e)}")
                     
                     with col3:
-                        audit_report = generate_audit_trail_report(analysis, df_with_changes, anomalies)
-                        st.download_button(
-                            label="🔍 Download Audit Trail", 
-                            data=audit_report,
-                            file_name="audit_trail_report.txt",
-                            mime="text/plain"
-                        )
+                        try:
+                            audit_report = generate_audit_trail_report(analysis, df_with_changes, anomalies)
+                            st.download_button(
+                                label="Download Audit Trail", 
+                                data=audit_report,
+                                file_name="audit_trail_report.txt",
+                                mime="text/plain"
+                            )
+                        except Exception as e:
+                            st.error(f"Error generating audit trail: {str(e)}")
                     
-                    # Audit trail
-                    conn.execute('''
-                        INSERT INTO analysis_log 
-                        (timestamp, input_file_name, anomalies_detected, prompt_used, ai_response) 
-                        VALUES (?, ?, ?, ?, ?)
-                    ''', (
-                        datetime.now().isoformat(),
-                        uploaded_file.name,
-                        len(anomalies),
-                        "Financial analysis prompt",
-                        json.dumps(analysis.model_dump(), indent=2)
-                    ))
-                    conn.commit()
-                    
-                    st.success("✅ Analysis complete! Audit trail logged.")
+                    # Log to database
+                    try:
+                        conn.execute('''
+                            INSERT INTO analysis_log 
+                            (timestamp, input_file_name, anomalies_detected, prompt_used, ai_response) 
+                            VALUES (?, ?, ?, ?, ?)
+                        ''', (
+                            datetime.now().isoformat(),
+                            uploaded_file.name,
+                            len(anomalies),
+                            "Financial analysis with counter-examples",
+                            json.dumps(analysis.model_dump(), indent=2)
+                        ))
+                        conn.commit()
+                        
+                        st.success("Analysis complete! Audit trail logged.")
+                    except Exception as e:
+                        st.warning(f"Could not log to database: {str(e)}")
         
         except Exception as e:
             st.error(f"Error processing file: {str(e)}")
+            st.info("Please ensure your file is a valid CSV or Excel file with numeric data.")
+    
+    else:
+        # Show instructions when no file is uploaded
+        st.info("Upload a CSV or Excel file to begin analysis")
+        
+        with st.expander("Expected Data Format"):
+            st.write("Your file should contain:")
+            st.write("• **Quarterly data** with clear time periods")
+            st.write("• **Numeric columns** for financial metrics (Revenue, Expenses, etc.)")
+            st.write("• **Column headers** that clearly identify each metric")
+            st.write("• **Multiple quarters** for meaningful statistical analysis")
     
     # Footer
     st.markdown("---")
