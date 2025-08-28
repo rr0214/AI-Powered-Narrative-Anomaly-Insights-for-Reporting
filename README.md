@@ -23,7 +23,7 @@
 - **Reduce risk** of oversight with structured anomaly flagging
 
 ### Differentiation
-- **Embedded** directly in Workiva workflows (no copy-paste to/from external tools)
+- **Embedded** directly in [insert company] workflows (no copy-paste to/from external tools)
 - **Built-in** audit trail + governance controls (critical for enterprise)
 
 ### Launch Motion
@@ -118,7 +118,7 @@ Upload CSV → |   pandas    | → stats (QoQ, z-score, IQR)
 - Detects anomalies
 - Drafts narratives
 - Routes draft via approval chain (Slack/Jira)
-- Submits final doc into Workiva filing pipeline
+- Submits final doc into [inset company] filing pipeline
 
 **Guardrails:** Human-in-the-loop approvals, full audit logs, provenance tags
 
