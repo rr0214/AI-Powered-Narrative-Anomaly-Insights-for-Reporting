@@ -6,7 +6,7 @@
 
 **Goal:** Demonstrate how AI can streamline financial/ESG reporting by automatically generating executive-ready narratives and flagging anomalies from structured data.
 
-** Demonstrates how LLMs + lightweight stats can save hours of analyst effort, reduce errors, and increase transparency.
+**Why Workiva:** Aligns with Workiva's mission of connected, compliant reporting by showing how LLMs + lightweight stats can save hours of analyst effort, reduce errors, and increase transparency.
 
 ---
 
@@ -23,7 +23,7 @@
 - **Reduce risk** of oversight with structured anomaly flagging
 
 ### Differentiation
-- **Embedded** directly in [insert company] workflows (no copy-paste to/from external tools)
+- **Embedded** directly in Workiva workflows (no copy-paste to/from external tools)
 - **Built-in** audit trail + governance controls (critical for enterprise)
 
 ### Launch Motion
@@ -45,6 +45,31 @@ AI-generated summaries and anomaly callouts from connected data sources, with hu
 - **30%** reduction in report prep time
 - **90%** accuracy of metrics cited in AI output
 - **≥70%** adoption in pilot teams
+
+---
+
+## 🔧 Key Technical Features
+
+### Contracted Output, Not Prose
+We return a **strict JSON contract** so downstream steps (review, export, filing) are reliable and automatable—no surprise formats or missing fields.
+
+### Data-Grounded Narratives
+The AI can't invent figures; every number is **pulled from the source dataset**, which cuts rework and prevents compliance risk.
+
+### Provenance by Design
+Each claim carries a **reference back to the exact metric/cell**, giving auditors and reviewers click-through traceability.
+
+### Risk Coverage Guarantee
+If the system flags an anomaly, the narrative **must address it**—no blind spots in the final draft.
+
+### Fail-Closed Safety Net
+If any check fails (schema, numbers, references, coverage), we **block export** and show a clear fix path—protecting trust and avoiding bad filings.
+
+### Key Performance Indicators
+- **0%** unreferenced numbers
+- **≥90%** schema-valid generations  
+- **100%** of flagged anomalies covered
+- **↓** drafting time per report
 
 ---
 
@@ -118,7 +143,7 @@ Upload CSV → |   pandas    | → stats (QoQ, z-score, IQR)
 - Detects anomalies
 - Drafts narratives
 - Routes draft via approval chain (Slack/Jira)
-- Submits final doc into [inset company] filing pipeline
+- Submits final doc into Workiva filing pipeline
 
 **Guardrails:** Human-in-the-loop approvals, full audit logs, provenance tags
 
@@ -182,3 +207,8 @@ To ensure AI-generated narratives and anomaly explanations are reliable, outputs
 
 ---
 
+## 🎯 Key Value Proposition
+
+> **"I can own AI product vision, delivery, and adoption at Workiva."**
+
+This README structure tells a complete PM story: business case → product spec → prototype → roadmap, demonstrating comprehensive product management capabilities for AI-powered enterprise solutions.
